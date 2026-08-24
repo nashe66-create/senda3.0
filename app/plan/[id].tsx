@@ -79,7 +79,10 @@ const methodIcons: Record<ReceivingMethod, typeof Smartphone> = {
 };
 
 export default function PlanDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, created_recipient_id } = useLocalSearchParams<{
+    id: string;
+    created_recipient_id?: string;
+  }>();
   const { profile } = useAuth();
   const [plan, setPlan] = useState<PlanWithCommitments | null>(null);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -140,6 +143,17 @@ export default function PlanDetailScreen() {
       loadPlan();
     }, [loadPlan])
   );
+
+  // Pre-select a recipient that was just created from this plan
+  useEffect(() => {
+    if (created_recipient_id) {
+      setSelectedRecipientId(created_recipient_id);
+      setCommitmentAmount('');
+      setCommitmentError(null);
+      setShowAddCommitment(true);
+      router.setParams({ created_recipient_id: undefined });
+    }
+  }, [created_recipient_id]);
 
   // Quote countdown timer
   useEffect(() => {
@@ -1136,8 +1150,12 @@ export default function PlanDetailScreen() {
                 </Text>
                 <Button
                   onPress={() => {
-                    setShowAddCommitment(false);
-                    router.push('/recipient/new');
+                    const q = new URLSearchParams({
+                      plan_id: id,
+                      destination_country: plan.destination_country ?? '',
+                      destination_currency: plan.destination_currency ?? '',
+                    }).toString();
+                    router.push(`/recipient/new?${q}`);
                   }}
                   size="sm"
                   style={styles.modalAddRecipBtn}

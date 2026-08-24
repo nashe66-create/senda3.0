@@ -181,7 +181,18 @@ Deno.serve(async (req: Request) => {
       try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
 
       if (!response.ok) {
-        console.log("[flutterwave-recipients] create: Flutterwave returned", response.status);
+        const diagnosticHeaders = Object.fromEntries(
+          ["x-request-id", "x-trace-id", "x-reference-id", "x-correlation-id", "traceparent"]
+            .flatMap((name) => {
+              const value = response.headers.get(name);
+              return value ? [[name, value]] : [];
+            }),
+        );
+        console.log("[flutterwave-recipients] create: Flutterwave error", {
+          status: response.status,
+          headers: diagnosticHeaders,
+          body: data,
+        });
         return jsonResponse({
           success: false,
           error: data?.message ?? data?.error?.message ?? `Flutterwave returned ${response.status}`,

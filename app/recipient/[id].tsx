@@ -157,13 +157,24 @@ function getItemName(
 export default function RecipientDetailScreen() {
   const {
     id,
+    plan_id,
+    destination_country,
+    destination_currency,
   } =
     useLocalSearchParams<{
       id: string;
+      plan_id?: string;
+      destination_country?: string;
+      destination_currency?: string;
     }>();
 
   const isNew =
     id === 'new';
+
+  // Plan corridor lock only ever applies when creating a brand-new recipient
+  const fromPlan = isNew && !!plan_id;
+  const lockedCountry = fromPlan && destination_country ? destination_country : null;
+  const lockedCurrency = fromPlan && destination_currency ? destination_currency : null;
 
   /* =======================================================
      RECIPIENT
@@ -615,12 +626,27 @@ export default function RecipientDetailScreen() {
     ]
   );
 
+  // Plan-launched: lock the country/currency to the plan corridor once corridor data has loaded
+  useEffect(() => {
+    if (isNew && lockedCountry && !country && corridorCountries.length > 0) {
+      handleCountryChange(lockedCountry);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, lockedCountry, corridorCountries]);
+
   /* =======================================================
      DESTINATIONS
      ======================================================= */
 
   const countries =
-    corridorCountries.map(
+    corridorCountries
+      .filter(
+        (c) =>
+          !lockedCountry ||
+          c.country_code ===
+            lockedCountry
+      )
+      .map(
       (c) => ({
         code: c.country_code,
         name: c.country_name,
@@ -1082,6 +1108,10 @@ export default function RecipientDetailScreen() {
           }
         }
 
+        if (isNew && fromPlan) {
+          router.setParams({ created_recipient_id: savedRecipient.id });
+        }
+
         router.back();
       } catch (e: any) {
         console.error(
@@ -1352,6 +1382,13 @@ export default function RecipientDetailScreen() {
             Destination country
           </Text>
 
+          {fromPlan && lockedCountry && (
+            <Text style={styles.mutedText}>
+              This plan sends to {lockedCountry}
+              {lockedCurrency ? ` (${lockedCurrency})` : ''}. The recipient must use the same destination.
+            </Text>
+          )}
+
           {optionsLoading &&
             countries.length ===
               0 && (
@@ -1426,10 +1463,12 @@ export default function RecipientDetailScreen() {
                         index
                       )}
                       onPress={() =>
+                        !lockedCountry &&
                         handleCountryChange(
                           code
                         )
                       }
+                      disabled={!!lockedCountry}
                       style={[
                         styles.countryChip,
 
