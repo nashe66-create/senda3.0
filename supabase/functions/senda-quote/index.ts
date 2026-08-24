@@ -107,9 +107,9 @@ Deno.serve(async (req: Request) => {
 
     let payload: {
       plan_id: string;
-      pricing_mode: "fixed_source" | "fixed_destination";
-      destination_country: string;
-      destination_currency: string;
+      pricing_mode?: "fixed_source" | "fixed_destination";
+      destination_country?: string;
+      destination_currency?: string;
       allocations: Array<{
         commitment_id?: string;
         recipient_id?: string;
@@ -121,10 +121,10 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Invalid JSON request body" }, 400);
     }
 
-    if (!payload.plan_id || !payload.pricing_mode || !payload.destination_country || !payload.destination_currency) {
+    if (!payload.plan_id) {
       return jsonResponse({
         success: false,
-        error: "Missing required fields: plan_id, pricing_mode, destination_country, destination_currency",
+        error: "Missing required field: plan_id",
       }, 400);
     }
 
@@ -135,7 +135,7 @@ Deno.serve(async (req: Request) => {
     // Verify the user owns the plan
     const { data: plan, error: planError } = await supabase
       .from("plans")
-      .select("id, user_id, status, total_gbp")
+      .select("id, user_id, status, total_gbp, pricing_mode, destination_country, destination_currency")
       .eq("id", payload.plan_id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -149,6 +149,26 @@ Deno.serve(async (req: Request) => {
         success: false,
         error: "Quote can only be created for draft or quoted plans",
         error_code: "INVALID_PLAN_STATUS",
+      }, 400);
+    }
+
+    const planPricingMode = plan.pricing_mode as "fixed_source" | "fixed_destination";
+    const planDestinationCountry = String(plan.destination_country ?? "").toUpperCase();
+    const planDestinationCurrency = String(plan.destination_currency ?? "").toUpperCase();
+
+    if (!planPricingMode || (planPricingMode !== "fixed_source" && planPricingMode !== "fixed_destination")) {
+      return jsonResponse({
+        success: false,
+        error: "Plan pricing mode is invalid",
+        error_code: "INVALID_PLAN_PRICING_MODE",
+      }, 400);
+    }
+
+    if (!planDestinationCountry || !planDestinationCurrency) {
+      return jsonResponse({
+        success: false,
+        error: "Plan corridor is incomplete. Destination country and currency are required.",
+        error_code: "PLAN_CORRIDOR_INCOMPLETE",
       }, 400);
     }
 
@@ -167,28 +187,113 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "No recipients in this plan" }, 400);
     }
 
-    // Enforce one country/currency: verify all commitments match the requested destination_currency
-    for (const c of commitments) {
-      if (c.destination_currency !== payload.destination_currency) {
+    // Validate allocation mapping by commitment_id (no array-order reliance)
+    const planCommitmentIds = new Set(commitments.map((c) => c.id));
+    const allocationsByCommitmentId = new Map<string, (typeof payload.allocations)[number]>();
+
+    for (const allocation of payload.allocations) {
+      const commitmentId = allocation.commitment_id?.trim();
+      if (!commitmentId) {
         return jsonResponse({
           success: false,
-          error: `All recipients must use the same destination currency. Expected ${payload.destination_currency}, found ${c.destination_currency}`,
-          error_code: "MIXED_CURRENCIES",
+          error: "Each allocation must include commitment_id",
+          error_code: "MISSING_COMMITMENT_ID",
+        }, 400);
+      }
+
+      if (!planCommitmentIds.has(commitmentId)) {
+        return jsonResponse({
+          success: false,
+          error: `Allocation commitment_id ${commitmentId} does not belong to this plan`,
+          error_code: "INVALID_COMMITMENT_ID",
+        }, 400);
+      }
+
+      if (allocationsByCommitmentId.has(commitmentId)) {
+        return jsonResponse({
+          success: false,
+          error: `Duplicate allocation for commitment_id ${commitmentId}`,
+          error_code: "DUPLICATE_COMMITMENT_ID",
+        }, 400);
+      }
+
+      allocationsByCommitmentId.set(commitmentId, allocation);
+    }
+
+    if (allocationsByCommitmentId.size !== commitments.length) {
+      return jsonResponse({
+        success: false,
+        error: `Allocation count mismatch. Expected ${commitments.length}, received ${allocationsByCommitmentId.size}`,
+        error_code: "ALLOCATION_COUNT_MISMATCH",
+      }, 400);
+    }
+
+    for (const c of commitments) {
+      if (!allocationsByCommitmentId.has(c.id)) {
+        return jsonResponse({
+          success: false,
+          error: `Missing allocation for commitment_id ${c.id}`,
+          error_code: "MISSING_ALLOCATION",
+        }, 400);
+      }
+    }
+
+    // Server-side corridor validation against authoritative plan data
+    for (const c of commitments) {
+      const recipient = c.recipient as any;
+      if (!recipient) {
+        return jsonResponse({
+          success: false,
+          error: `Commitment ${c.id} has no recipient attached`,
+          error_code: "MISSING_RECIPIENT",
+        }, 400);
+      }
+
+      const recipientCountry = String(recipient.country ?? "").toUpperCase();
+      if (recipientCountry !== planDestinationCountry) {
+        return jsonResponse({
+          success: false,
+          error: `Recipient ${recipient.name ?? c.recipient_id ?? c.id} is in ${recipient.country ?? "unknown"}, but plan destination country is ${planDestinationCountry}`,
+          error_code: "RECIPIENT_COUNTRY_MISMATCH",
+        }, 400);
+      }
+
+      const commitmentCurrency = String(c.destination_currency ?? "").toUpperCase();
+      if (commitmentCurrency !== planDestinationCurrency) {
+        return jsonResponse({
+          success: false,
+          error: `Commitment ${c.id} destination currency ${c.destination_currency ?? "unknown"} does not match plan destination currency ${planDestinationCurrency}`,
+          error_code: "COMMITMENT_CURRENCY_MISMATCH",
+        }, 400);
+      }
+
+      const recipientCurrency = String(recipient.currency ?? "").toUpperCase();
+      if (recipientCurrency && recipientCurrency !== planDestinationCurrency) {
+        return jsonResponse({
+          success: false,
+          error: `Recipient ${recipient.name ?? c.recipient_id ?? c.id} currency ${recipient.currency} does not match plan destination currency ${planDestinationCurrency}`,
+          error_code: "RECIPIENT_CURRENCY_MISMATCH",
         }, 400);
       }
     }
 
     // Fetch FX rate from Flutterwave
     const accessToken = await getAccessToken();
-    const fxAmount = payload.pricing_mode === "fixed_source"
-      ? payload.allocations.reduce((sum, a) => sum + (a.source_amount ?? 0), 0)
-      : payload.allocations.reduce((sum, a) => sum + (a.destination_amount ?? 0), 0);
+    const fxAmount = planPricingMode === "fixed_source"
+      ? commitments.reduce((sum, c) => {
+          const allocation = allocationsByCommitmentId.get(c.id)!;
+          return sum + (allocation.source_amount ?? 0);
+        }, 0)
+      : commitments.reduce((sum, c) => {
+          const allocation = allocationsByCommitmentId.get(c.id)!;
+          return sum + (allocation.destination_amount ?? 0);
+        }, 0);
 
     if (fxAmount <= 0) {
       return jsonResponse({ success: false, error: "Total amount must be greater than zero" }, 400);
     }
 
-    const { rate: fxRate } = await fetchFxRate(accessToken, "GBP", payload.destination_currency, fxAmount);
+    const { rate: fxRate } = await fetchFxRate(accessToken, "GBP", planDestinationCurrency, fxAmount);
 
     if (fxRate <= 0) {
       return jsonResponse({ success: false, error: "Failed to fetch valid FX rate from Flutterwave" }, 502);
@@ -207,15 +312,14 @@ Deno.serve(async (req: Request) => {
     let totalSourceAmount = 0;
     let totalDestinationAmount = 0;
 
-    for (let i = 0; i < commitments.length; i++) {
-      const c = commitments[i];
-      const allocation = payload.allocations[i];
+    for (const c of commitments) {
+      const allocation = allocationsByCommitmentId.get(c.id)!;
       const recipient = c.recipient as any;
 
       let sourceAmount: number;
       let destinationAmount: number;
 
-      if (payload.pricing_mode === "fixed_source") {
+      if (planPricingMode === "fixed_source") {
         sourceAmount = Number(allocation?.source_amount ?? c.amount_gbp);
         destinationAmount = Number((sourceAmount * fxRate).toFixed(2));
       } else {
@@ -243,8 +347,11 @@ Deno.serve(async (req: Request) => {
     }
 
     // For fixed_source: validate that allocated source amounts match total
-    if (payload.pricing_mode === "fixed_source") {
-      const allocatedTotal = payload.allocations.reduce((sum, a) => sum + (a.source_amount ?? 0), 0);
+    if (planPricingMode === "fixed_source") {
+      const allocatedTotal = commitments.reduce((sum, c) => {
+        const allocation = allocationsByCommitmentId.get(c.id)!;
+        return sum + (allocation.source_amount ?? 0);
+      }, 0);
       if (Math.abs(allocatedTotal - totalSourceAmount) > 0.01) {
         return jsonResponse({
           success: false,
@@ -266,9 +373,6 @@ Deno.serve(async (req: Request) => {
     const { error: updateError } = await supabase
       .from("plans")
       .update({
-        pricing_mode: payload.pricing_mode,
-        destination_country: payload.destination_country,
-        destination_currency: payload.destination_currency,
         source_amount: Number(totalSourceAmount.toFixed(2)),
         destination_amount: Number(totalDestinationAmount.toFixed(2)),
         customer_pays: customerPays,
@@ -307,10 +411,10 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       success: true,
       plan_id: payload.plan_id,
-      pricing_mode: payload.pricing_mode,
+      pricing_mode: planPricingMode,
       source_currency: "GBP",
-      destination_country: payload.destination_country,
-      destination_currency: payload.destination_currency,
+      destination_country: planDestinationCountry,
+      destination_currency: planDestinationCurrency,
       source_amount: Number(totalSourceAmount.toFixed(2)),
       destination_amount: Number(totalDestinationAmount.toFixed(2)),
       customer_pays: customerPays,
