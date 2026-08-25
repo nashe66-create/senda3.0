@@ -1397,7 +1397,7 @@ export async function createFlutterwaveRecipient(params: {
   receivingMethod: string;
   currency: string;
   mobileMoney?: { network: string; msisdn: string; country: string };
-  bankAccount?: { accountNumber: string; bankCode: string; country: string };
+  bankAccount?: { account_number: string; bank_code: string; country: string };
 }): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -1444,7 +1444,7 @@ export async function updateFlutterwaveRecipient(params: {
   receivingMethod: string;
   currency: string;
   mobileMoney?: { network: string; msisdn: string; country: string };
-  bankAccount?: { accountNumber: string; bankCode: string; country: string };
+  bankAccount?: { account_number: string; bank_code: string; country: string };
 }): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;

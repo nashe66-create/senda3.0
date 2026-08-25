@@ -43,22 +43,32 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-function getRecipientType(receivingMethod: string, currency: string): string {
-  const suffix = (currency || "").toLowerCase();
-  if (receivingMethod === "mobile_money") return `mobile_money_${suffix}`;
-  if (receivingMethod === "bank_account") return `bank_${suffix}`;
-  return suffix;
+// Flutterwave's recipient "type" is a fixed literal ("mobile_money" | "bank"), never currency-suffixed.
+function getRecipientType(receivingMethod: string): string {
+  if (receivingMethod === "mobile_money") return "mobile_money";
+  if (receivingMethod === "bank_account") return "bank";
+  return receivingMethod;
 }
 
 function buildRecipientBody(
   receivingMethod: string,
+  currency: string,
   mobileMoney: { network: string; msisdn: string; country: string } | undefined,
   bankAccount: { account_number: string; bank_code: string; country: string } | undefined,
   recipientType: string,
+  recipientName: string,
 ): Record<string, unknown> | null {
-  const body: Record<string, unknown> = { type: recipientType };
+  const nameParts = (recipientName ?? "").trim().split(/\s+/);
+  const firstName = nameParts[0] || "";
+  const lastName = nameParts.slice(1).join(" ") || "";
+  const body: Record<string, unknown> = {
+    type: recipientType,
+    name: { first: firstName, last: lastName },
+    currency,
+  };
 
   if (receivingMethod === "mobile_money" && mobileMoney) {
+    if (!mobileMoney.network?.trim()) return null;
     body.mobile_money = {
       network: mobileMoney.network,
       msisdn: mobileMoney.msisdn,
@@ -84,6 +94,50 @@ function extractAccountName(receivingMethod: string, data: any): string | null {
     return [nameObj.first, nameObj.last].filter(Boolean).join(" ") || null;
   }
   return null;
+}
+
+// Central Flutterwave validation-error -> user-safe message mapping.
+// Never surface raw Flutterwave codes/field paths to the user.
+const VALIDATION_FIELD_MESSAGES: Array<{ match: RegExp; message: string }> = [
+  { match: /mobile.*network/i, message: "The selected mobile network could not be verified. Please select the correct network." },
+  { match: /bank\.account_number|account_number/i, message: "Please enter a valid bank account number." },
+  { match: /bank\.code|bank\.branch/i, message: "Please select a valid bank." },
+  { match: /phone/i, message: "Please enter a valid phone number." },
+  { match: /email/i, message: "Please provide a valid email address." },
+  { match: /address/i, message: "Please provide a valid recipient address." },
+];
+
+function mapValidationError(receivingMethod: string, data: any): { code: string; message: string } {
+  const rawErrors: Array<{ field_name?: string; message?: string }> =
+    Array.isArray(data?.error?.validation_errors) ? data.error.validation_errors
+    : Array.isArray(data?.validation_errors) ? data.validation_errors
+    : [];
+
+  const codeParts: string[] = [];
+  const messages = new Set<string>();
+
+  for (const err of rawErrors) {
+    const field = String(err?.field_name ?? "");
+    if (field) codeParts.push(field);
+    const mapped = VALIDATION_FIELD_MESSAGES.find((m) => m.match.test(field));
+    if (mapped) messages.add(mapped.message);
+  }
+
+  if (messages.size === 0) {
+    // Fall back to a method-specific generic message rather than exposing raw Flutterwave text.
+    messages.add(
+      receivingMethod === "mobile_money"
+        ? "We couldn't verify the mobile money network for this recipient. Please select the correct mobile network and try again."
+        : receivingMethod === "bank_account"
+        ? "We couldn't verify the bank details for this recipient. Please check the bank and account number and try again."
+        : "We couldn't verify this recipient's payout details. Please review and try again."
+    );
+  }
+
+  return {
+    code: codeParts.join(",") || String(data?.error?.type ?? data?.type ?? "VALIDATION_ERROR"),
+    message: [...messages].join(" "),
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -149,9 +203,21 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Missing required fields" }, 400);
       }
 
-      const recipientType = getRecipientType(payload.receiving_method, payload.currency);
+      const { data: recipientRow, error: recipientLookupError } = await serviceClient
+        .from("recipients")
+        .select("id, user_id, name, receiving_method, bank_code, account_number, country")
+        .eq("id", payload.recipient_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (recipientLookupError || !recipientRow) {
+        console.log("[flutterwave-recipients] create: recipient not found", payload.recipient_id, recipientLookupError?.message);
+        return jsonResponse({ success: false, error: "Recipient not found" }, 404);
+      }
+
+      const recipientType = getRecipientType(payload.receiving_method);
       const recipientBody = buildRecipientBody(
-        payload.receiving_method, payload.mobile_money, payload.bank_account, recipientType,
+        payload.receiving_method, payload.currency, payload.mobile_money, payload.bank_account, recipientType, recipientRow.name,
       );
 
       if (!recipientBody) {
@@ -163,6 +229,13 @@ Deno.serve(async (req: Request) => {
 
       const idempotencyKey = `SENDA-RECIPIENT-${payload.recipient_id}`;
       console.log("[flutterwave-recipients] create: recipient_id:", payload.recipient_id, "type:", recipientType, "idempotency:", idempotencyKey);
+      // TEMPORARY DIAGNOSTIC: confirm the exact outbound network/currency/type (no phone/account/name values).
+      console.log("[flutterwave-recipients] create: outbound", {
+        type: recipientType,
+        currency: payload.currency,
+        country: payload.mobile_money?.country ?? payload.bank_account?.country ?? null,
+        mobile_money_network: payload.mobile_money?.network ?? null,
+      });
 
       const response = await fetch(`${FLW_BASE_URL}/transfers/recipients`, {
         method: "POST",
@@ -193,10 +266,20 @@ Deno.serve(async (req: Request) => {
           headers: diagnosticHeaders,
           body: data,
         });
+        const mapped = mapValidationError(payload.receiving_method, data);
+        await serviceClient
+          .from("recipients")
+          .update({
+            verification_status: "needs_attention",
+            validation_error_code: mapped.code,
+            validation_error_message: mapped.message,
+          })
+          .eq("id", payload.recipient_id)
+          .eq("user_id", userId);
         return jsonResponse({
           success: false,
-          error: data?.message ?? data?.error?.message ?? `Flutterwave returned ${response.status}`,
-          flutterwave_response: data,
+          error: mapped.message,
+          error_code: mapped.code,
         }, response.status);
       }
 
@@ -207,6 +290,9 @@ Deno.serve(async (req: Request) => {
       const updateData: Record<string, unknown> = {
         flutterwave_recipient_id: flwRecipientId,
         flutterwave_recipient_type: flwRecipientType,
+        verification_status: "verified",
+        validation_error_code: null,
+        validation_error_message: null,
       };
 
       if (accountName) {
@@ -247,9 +333,21 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Missing required fields" }, 400);
       }
 
-      const recipientType = getRecipientType(payload.receiving_method, payload.currency);
+      const { data: recipientRow, error: recipientLookupError } = await serviceClient
+        .from("recipients")
+        .select("id, user_id, name, receiving_method, bank_code, account_number, country")
+        .eq("id", payload.recipient_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (recipientLookupError || !recipientRow) {
+        console.log("[flutterwave-recipients] update: recipient not found", payload.recipient_id, recipientLookupError?.message);
+        return jsonResponse({ success: false, error: "Recipient not found" }, 404);
+      }
+
+      const recipientType = getRecipientType(payload.receiving_method);
       const recipientBody = buildRecipientBody(
-        payload.receiving_method, payload.mobile_money, payload.bank_account, recipientType,
+        payload.receiving_method, payload.currency, payload.mobile_money, payload.bank_account, recipientType, recipientRow.name,
       );
 
       if (!recipientBody) {
@@ -261,6 +359,13 @@ Deno.serve(async (req: Request) => {
 
       const idempotencyKey = `SENDA-RECIPIENT-${payload.recipient_id}`;
       console.log("[flutterwave-recipients] update: recipient_id:", payload.recipient_id, "type:", recipientType, "idempotency:", idempotencyKey);
+      // TEMPORARY DIAGNOSTIC: confirm the exact outbound network/currency/type (no phone/account/name values).
+      console.log("[flutterwave-recipients] update: outbound", {
+        type: recipientType,
+        currency: payload.currency,
+        country: payload.mobile_money?.country ?? payload.bank_account?.country ?? null,
+        mobile_money_network: payload.mobile_money?.network ?? null,
+      });
 
       const response = await fetch(`${FLW_BASE_URL}/transfers/recipients`, {
         method: "POST",
@@ -279,11 +384,32 @@ Deno.serve(async (req: Request) => {
       try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
 
       if (!response.ok) {
-        console.log("[flutterwave-recipients] update: Flutterwave returned", response.status);
+        const diagnosticHeaders = Object.fromEntries(
+          ["x-request-id", "x-trace-id", "x-reference-id", "x-correlation-id", "traceparent"]
+            .flatMap((name) => {
+              const value = response.headers.get(name);
+              return value ? [[name, value]] : [];
+            }),
+        );
+        console.log("[flutterwave-recipients] update: Flutterwave error", {
+          status: response.status,
+          headers: diagnosticHeaders,
+          body: data,
+        });
+        const mapped = mapValidationError(payload.receiving_method, data);
+        await serviceClient
+          .from("recipients")
+          .update({
+            verification_status: "needs_attention",
+            validation_error_code: mapped.code,
+            validation_error_message: mapped.message,
+          })
+          .eq("id", payload.recipient_id)
+          .eq("user_id", userId);
         return jsonResponse({
           success: false,
-          error: data?.message ?? data?.error?.message ?? `Flutterwave returned ${response.status}`,
-          flutterwave_response: data,
+          error: mapped.message,
+          error_code: mapped.code,
         }, response.status);
       }
 
@@ -294,6 +420,9 @@ Deno.serve(async (req: Request) => {
       const updateData: Record<string, unknown> = {
         flutterwave_recipient_id: flwRecipientId,
         flutterwave_recipient_type: flwRecipientType,
+        verification_status: "verified",
+        validation_error_code: null,
+        validation_error_message: null,
       };
 
       if (accountName) {

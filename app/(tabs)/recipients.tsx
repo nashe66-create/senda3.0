@@ -18,6 +18,7 @@ import {
   ChevronRight,
 } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 import { Loading } from '@/components/ui/Loading';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
@@ -92,6 +93,9 @@ export default function RecipientsScreen() {
                   {getReceivingMethodLabel(item.receiving_method)}
                 </Text>
               </View>
+              {item.verification_status === 'needs_attention' && (
+                <Badge color="error" style={{ marginTop: 4 }}>Needs attention</Badge>
+              )}
               {item.phone ? (
                 <Text style={styles.phoneText}>{item.phone}</Text>
               ) : item.account_number ? (

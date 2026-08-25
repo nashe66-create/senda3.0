@@ -109,16 +109,29 @@ export const Typography = {
   label: { fontSize: 14, fontFamily: 'Inter-Medium' as const, lineHeight: 18 },
 };
 
+// Complete calling-code set for every country Flutterwave supports for mobile
+// money or bank payouts (per Flutterwave's published /mobile-networks and
+// /banks country enums). These are standard ITU-T calling codes, not guessed.
 export const COUNTRY_DIAL_CODES: Record<string, string> = {
-  NG: '+234',
-  ZW: '+263',
-  KE: '+254',
-  GH: '+233',
-  UG: '+256',
-  TZ: '+255',
-  ZA: '+27',
-  RW: '+250',
+  CG: '+242',
   CM: '+237',
+  CI: '+225',
+  EG: '+20',
+  ET: '+251',
+  GA: '+241',
+  GH: '+233',
+  IN: '+91',
+  KE: '+254',
+  MW: '+265',
+  NG: '+234',
+  RW: '+250',
+  SL: '+232',
+  SN: '+221',
+  TD: '+235',
+  TZ: '+255',
+  UG: '+256',
+  US: '+1',
+  ZA: '+27',
   ZM: '+260',
 };
 

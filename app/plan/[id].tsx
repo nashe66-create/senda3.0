@@ -212,6 +212,13 @@ export default function PlanDetailScreen() {
     const recipient = recipients.find((r) => r.id === selectedRecipientId);
     if (!recipient) return;
 
+    if (recipient.verification_status !== 'verified' || !recipient.flutterwave_recipient_id) {
+      setCommitmentError(
+        'This recipient needs attention before a payout can be made. Please update the recipient details.'
+      );
+      return;
+    }
+
     // Enforce same corridor
     if (plan?.destination_country && recipient.country !== plan.destination_country) {
       setCommitmentError(
@@ -1190,15 +1197,23 @@ export default function PlanDetailScreen() {
                   const country = COUNTRIES.find((c) => c.code === r.country);
                   const isSelected = selectedRecipientId === r.id;
                   const alreadyAdded = plan.commitments.some((c) => c.recipient_id === r.id);
+                  const needsAttention = r.verification_status === 'needs_attention';
+                  const isDisabled = alreadyAdded || needsAttention;
                   return (
                     <TouchableOpacity
                       key={r.id}
-                      onPress={() => !alreadyAdded && setSelectedRecipientId(r.id)}
+                      onPress={() => {
+                        if (needsAttention) {
+                          router.push(`/recipient/${r.id}`);
+                          return;
+                        }
+                        if (!alreadyAdded) setSelectedRecipientId(r.id);
+                      }}
                       disabled={alreadyAdded}
                       style={[
                         styles.recipientPickerItem,
                         isSelected && styles.recipientPickerSelected,
-                        alreadyAdded && styles.recipientPickerDisabled,
+                        isDisabled && styles.recipientPickerDisabled,
                       ]}
                     >
                       <View style={styles.recipientPickerInfo}>
@@ -1208,6 +1223,11 @@ export default function PlanDetailScreen() {
                         <Text style={styles.recipientPickerMeta}>
                           {country ? `${country.flag} ${country.name}` : r.country} · {getReceivingMethodLabel(r.receiving_method)}
                         </Text>
+                        {needsAttention && (
+                          <Text style={[styles.recipientPickerMeta, { color: Colors.error[600] }]}>
+                            Needs attention · Update recipient details before using this recipient.
+                          </Text>
+                        )}
                       </View>
                       {isSelected && (
                         <CheckCircle2 color={Colors.primary[600]} size={20} strokeWidth={2} />

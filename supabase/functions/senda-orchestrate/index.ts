@@ -217,7 +217,7 @@ Deno.serve(async (req: Request) => {
             id, name, country, receiving_method, phone,
             mobile_money_network, mobile_money_provider,
             bank_code, account_number, destination_country,
-            currency, flutterwave_recipient_id
+            currency, flutterwave_recipient_id, verification_status
           )
         `)
         .eq("plan_id", payload.plan_id);
@@ -237,6 +237,7 @@ Deno.serve(async (req: Request) => {
             destination_country: recipient.destination_country ?? recipient.country ?? null,
             currency: recipient.currency ?? null,
             flutterwave_recipient_id: recipient.flutterwave_recipient_id ?? null,
+            verification_status: recipient.verification_status ?? "pending",
           } : null;
 
           const payoutMethod = c.receiving_method === "bank_account" ? "bank"
@@ -414,13 +415,33 @@ Deno.serve(async (req: Request) => {
         const lastName = nameParts.slice(1).join(" ") || "";
         const countryCode = snapshot?.destination_country ?? snapshot?.country ?? "";
 
-        let transferPath = "/direct-transfers";
+        let transferPath: string;
         let transferPayload: Record<string, unknown>;
 
-        if (c.payout_method === "bank") {
+        if (c.payout_method === "bank" || c.payout_method === "mobile_money") {
+          // Flutterwave transfers by recipient_id reuse the recipient created earlier
+          // (its type/currency/network/bank details already validated at creation time).
+          const recipientId = snapshot?.flutterwave_recipient_id;
+          const isVerified = snapshot?.verification_status === "verified";
+          if (!recipientId || !isVerified) {
+            const errorMsg = "This recipient needs attention before a payout can be made. Please update the recipient details.";
+            failed++;
+            errors.push(`${recipientName}: ${errorMsg}`);
+            await serviceClient
+              .from("commitments")
+              .update({
+                status: "failed",
+                failure_reason: errorMsg,
+                failure_reason_display: errorMsg,
+              })
+              .eq("id", c.id);
+            payouts.push({ commitment_id: c.id, recipient_name: recipientName, status: "failed", transfer_id: null, error: errorMsg });
+            continue;
+          }
+
+          transferPath = "/transfers";
           transferPayload = {
             action: "deferred",
-            type: `bank_${c.destination_currency.toLowerCase()}`,
             reference: `senda-${c.id.substring(0, 18)}`,
             narration: `Senda transfer to ${snapshot?.name ?? "recipient"}`,
             payment_instruction: {
@@ -429,41 +450,12 @@ Deno.serve(async (req: Request) => {
                 applies_to: "source_currency",
                 value: Number(c.amount_gbp),
               },
-              recipient: {
-                name: { first: firstName, last: lastName },
-                bank: {
-                  account_number: snapshot?.account_number ?? "",
-                  code: snapshot?.bank_code ?? "",
-                },
-              },
-              destination_currency: c.destination_currency,
-            },
-          };
-        } else if (c.payout_method === "mobile_money") {
-          transferPayload = {
-            action: "deferred",
-            type: `mobile_money_${c.destination_currency.toLowerCase()}`,
-            reference: `senda-${c.id.substring(0, 18)}`,
-            narration: `Senda transfer to ${snapshot?.name ?? "recipient"}`,
-            payment_instruction: {
-              source_currency: "GBP",
-              amount: {
-                applies_to: "source_currency",
-                value: Number(c.amount_gbp),
-              },
-              recipient: {
-                name: { first: firstName, last: lastName },
-                mobile_money: {
-                  network: snapshot?.mobile_money_network ?? snapshot?.mobile_money_provider ?? "MTN",
-                  msisdn: snapshot?.phone ?? "",
-                  country: countryCode,
-                },
-              },
-              destination_currency: c.destination_currency,
+              recipient_id: recipientId,
             },
           };
         } else {
-          // cash_pickup
+          // cash_pickup (inline; not part of the active recipient-creation flow)
+          transferPath = "/direct-transfers";
           transferPayload = {
             action: "deferred",
             type: `cash_pickup_${c.destination_currency.toLowerCase()}`,
@@ -746,6 +738,16 @@ Deno.serve(async (req: Request) => {
       }
 
       const snapshot = commitment.recipient_snapshot as any;
+      if (
+        (payload.payout_method === "mobile_money" || payload.payout_method === "bank") &&
+        (!snapshot?.flutterwave_recipient_id || snapshot?.verification_status !== "verified")
+      ) {
+        return jsonResponse({
+          success: false,
+          error: "This recipient needs attention before a payout can be made. Please update the recipient details.",
+        }, 400);
+      }
+
       const idempotencyKey = `SENDA-PAYOUT-RETRY-${commitment.id}-${payload.payout_method}`;
 
       // Update commitment with new method and reset status
@@ -767,46 +769,23 @@ Deno.serve(async (req: Request) => {
       const lastName = nameParts.slice(1).join(" ") || "";
       const countryCode = snapshot?.destination_country ?? snapshot?.country ?? "";
 
-      let transferPath = "/direct-transfers";
+      let transferPath: string;
       let transferPayload: Record<string, unknown>;
 
-      if (payload.payout_method === "bank") {
+      if (payload.payout_method === "bank" || payload.payout_method === "mobile_money") {
+        transferPath = "/transfers";
         transferPayload = {
           action: "deferred",
-          type: `bank_${commitment.destination_currency.toLowerCase()}`,
           reference: `senda-r${commitment.id.substring(0, 16)}`,
           narration: `Senda retry to ${snapshot?.name ?? "recipient"}`,
           payment_instruction: {
             source_currency: "GBP",
             amount: { applies_to: "source_currency", value: Number(commitment.amount_gbp) },
-            recipient: {
-              name: { first: firstName, last: lastName },
-              bank: { account_number: snapshot?.account_number ?? "", code: snapshot?.bank_code ?? "" },
-            },
-            destination_currency: commitment.destination_currency,
-          },
-        };
-      } else if (payload.payout_method === "mobile_money") {
-        transferPayload = {
-          action: "deferred",
-          type: `mobile_money_${commitment.destination_currency.toLowerCase()}`,
-          reference: `senda-r${commitment.id.substring(0, 16)}`,
-          narration: `Senda retry to ${snapshot?.name ?? "recipient"}`,
-          payment_instruction: {
-            source_currency: "GBP",
-            amount: { applies_to: "source_currency", value: Number(commitment.amount_gbp) },
-            recipient: {
-              name: { first: firstName, last: lastName },
-              mobile_money: {
-                network: snapshot?.mobile_money_network ?? snapshot?.mobile_money_provider ?? "MTN",
-                msisdn: snapshot?.phone ?? "",
-                country: countryCode,
-              },
-            },
-            destination_currency: commitment.destination_currency,
+            recipient_id: snapshot.flutterwave_recipient_id,
           },
         };
       } else {
+        transferPath = "/direct-transfers";
         transferPayload = {
           action: "deferred",
           type: `cash_pickup_${commitment.destination_currency.toLowerCase()}`,

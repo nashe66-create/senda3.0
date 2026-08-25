@@ -33,6 +33,8 @@ export type ReceivingMethod = 'mobile_money' | 'bank_account' | 'cash_pickup' | 
 
 export type PayoutType = 'mobile_money' | 'cash_pickup';
 
+export type RecipientVerificationStatus = 'pending' | 'verified' | 'needs_attention';
+
 export type RecurringType = 'one_off' | 'weekly' | 'biweekly' | 'monthly';
 
 export type TransferAction = 'deferred' | 'instant';
@@ -81,6 +83,9 @@ export interface Recipient {
   currency: string | null;
   flutterwave_network_code: string | null;
   flutterwave_bank_name: string | null;
+  verification_status: RecipientVerificationStatus;
+  validation_error_code: string | null;
+  validation_error_message: string | null;
   created_at: string;
 }
 
@@ -177,6 +182,7 @@ export interface RecipientSnapshot {
   destination_country: string | null;
   currency: string | null;
   flutterwave_recipient_id: string | null;
+  verification_status: RecipientVerificationStatus;
 }
 
 export interface QuoteRecipientBreakdown {

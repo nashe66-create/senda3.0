@@ -13,20 +13,42 @@ const FLW_BASE_URL = (() => {
   return /^https:\/\/[^ ]*flutterwave\.com/i.test(v) ? v : "https://developersandbox-api.flutterwave.com";
 })();
 
-// Static ISO 3166-1 country list — this is geography, not a Flutterwave-specific fact.
-// The discovery pool is the full set of African countries we check against Flutterwave.
-const COUNTRY_DISCOVERY_CODES = [
-  "AO", "BF", "BI", "CM", "CI", "CD", "CG", "EG", "ET", "GH",
-  "GN", "KE", "LR", "MW", "ML", "MZ", "NG", "RW", "SN", "SL",
-  "SO", "ZA", "TZ", "UG", "ZM",
+// Flutterwave does not publish a general "supported countries" discovery endpoint.
+// These lists are the ISO 3166-1 alpha-2 enums Flutterwave's own API reference
+// declares as valid values for the "country" query parameter of /mobile-networks
+// and /banks respectively — the most authoritative per-capability country lists
+// currently available. A country absent from a list is not treated as supported
+// for that capability, regardless of any other list it may appear in.
+const MOBILE_MONEY_COUNTRY_CODES = [
+  "CG", "CM", "CI", "EG", "ET", "GA", "GH", "KE", "MW", "RW",
+  "SN", "TZ", "TD", "UG", "ZM",
 ];
 
+const BANK_COUNTRY_CODES = [
+  "CM", "CI", "CG", "EG", "ET", "GA", "GH", "IN", "KE", "MW",
+  "NG", "RW", "SL", "SN", "TD", "TZ", "UG", "US", "ZA", "ZM",
+];
+
+const COUNTRY_DISCOVERY_CODES = Array.from(
+  new Set<string>([...MOBILE_MONEY_COUNTRY_CODES, ...BANK_COUNTRY_CODES]),
+).sort();
+
 const COUNTRY_NAMES: Record<string, string> = {
-  AO: "Angola", BF: "Burkina Faso", BI: "Burundi", CM: "Cameroon", CI: "Côte d'Ivoire",
-  CD: "DR Congo", CG: "Congo", EG: "Egypt", ET: "Ethiopia", GH: "Ghana",
-  GN: "Guinea", KE: "Kenya", LR: "Liberia", MW: "Malawi", ML: "Mali",
-  MZ: "Mozambique", NG: "Nigeria", RW: "Rwanda", SN: "Senegal", SL: "Sierra Leone",
-  SO: "Somalia", ZA: "South Africa", TZ: "Tanzania", UG: "Uganda", ZM: "Zambia",
+  CG: "Congo", CM: "Cameroon", CI: "Côte d'Ivoire", EG: "Egypt", ET: "Ethiopia",
+  GA: "Gabon", GH: "Ghana", IN: "India", KE: "Kenya", MW: "Malawi",
+  NG: "Nigeria", RW: "Rwanda", SL: "Sierra Leone", SN: "Senegal", TD: "Chad",
+  TZ: "Tanzania", UG: "Uganda", US: "United States", ZA: "South Africa", ZM: "Zambia",
+};
+
+// Flutterwave's /mobile-networks and /banks responses carry no currency field
+// (per the API's published response schema), so currency cannot be derived from
+// either response. This explicit ISO country->currency mapping is the sole
+// currency source; it is never guessed from a network or bank record.
+const COUNTRY_CURRENCY: Record<string, string> = {
+  CG: "XAF", CM: "XAF", CI: "XOF", EG: "EGP", ET: "ETB",
+  GA: "XAF", GH: "GHS", IN: "INR", KE: "KES", MW: "MWK",
+  NG: "NGN", RW: "RWF", SL: "SLL", SN: "XOF", TD: "XAF",
+  TZ: "TZS", UG: "UGX", US: "USD", ZA: "ZAR", ZM: "ZMW",
 };
 
 function jsonResponse(data: Record<string, unknown>, status = 200) {
@@ -113,20 +135,6 @@ async function getMobileNetworks(country: string, accessToken: string): Promise<
   }
 }
 
-function extractCurrency(networks: any[], countryCode: string): string {
-  for (const net of networks) {
-    const cur = net?.currency ?? net?.currency_code;
-    if (cur) return String(cur).toUpperCase();
-  }
-  // Fallback: derive from known country-currency mappings
-  const fallback: Record<string, string> = {
-    GH: "GHS", KE: "KES", TZ: "TZS", CM: "XAF", CI: "XOF",
-    SN: "XOF", RW: "RWF", MW: "MWK", ET: "ETB", UG: "UGX", ZM: "ZMW",
-    NG: "NGN", ZA: "ZAR",
-  };
-  return fallback[countryCode] || "";
-}
-
 async function getBanks(country: string, accessToken: string): Promise<BankResult> {
   try {
     const controller = new AbortController();
@@ -202,8 +210,15 @@ Deno.serve(async (req: Request) => {
       const batchResults = await Promise.all(
         batch.map(async (code) => {
           try {
-            const { networks, error, httpStatus } = await getMobileNetworks(code, accessToken);
-            const { banks, error: bankError, httpStatus: bankHttpStatus } = await getBanks(code, accessToken);
+            const supportsMobileMoney = MOBILE_MONEY_COUNTRY_CODES.includes(code);
+            const supportsBanks = BANK_COUNTRY_CODES.includes(code);
+
+            const { networks, error, httpStatus } = supportsMobileMoney
+              ? await getMobileNetworks(code, accessToken)
+              : { networks: [] as any[], error: null as string | null, httpStatus: null as number | null };
+            const { banks, error: bankError, httpStatus: bankHttpStatus } = supportsBanks
+              ? await getBanks(code, accessToken)
+              : { banks: [] as any[], error: null as string | null, httpStatus: null as number | null };
             checked++;
 
             if (error && bankError) {
@@ -216,7 +231,7 @@ Deno.serve(async (req: Request) => {
 
             const hasMobileMoney = networks.length > 0;
             const hasBanks = banks.length > 0;
-            const currency = extractCurrency(networks, code);
+            const currency = COUNTRY_CURRENCY[code] || "";
             const countryName = COUNTRY_NAMES[code] || code;
 
             // Upsert country
@@ -232,13 +247,16 @@ Deno.serve(async (req: Request) => {
                 last_synced_at: now,
               }, { onConflict: "country_code" });
 
+            // Canonical Flutterwave identifier is the "network" field; "name" is display-only.
+            const currentNetworkCodes = new Set<string>();
             if (hasMobileMoney) {
               enabled++;
               for (const net of networks) {
-                const networkCode = String(net?.code ?? net?.network ?? net?.provider_code ?? "").trim();
-                const networkName = String(net?.name ?? net?.network_name ?? net?.provider ?? "").trim();
+                const networkCode = String(net?.network ?? "").trim();
+                const networkName = String(net?.name ?? "").trim();
 
                 if (networkCode) {
+                  currentNetworkCodes.add(networkCode);
                   await supabase
                     .from("payout_corridor_networks")
                     .upsert({
@@ -253,13 +271,25 @@ Deno.serve(async (req: Request) => {
               disabled++;
             }
 
+            // Reconcile stale networks for this country only (never a global delete).
+            if (supportsMobileMoney && !error) {
+              let staleQuery = supabase.from("payout_corridor_networks").delete().eq("country_code", code);
+              if (currentNetworkCodes.size > 0) {
+                const keepList = `(${[...currentNetworkCodes].map((n) => `"${n.replace(/"/g, '')}"`).join(",")})`;
+                staleQuery = staleQuery.not("network_code", "in", keepList);
+              }
+              await staleQuery;
+            }
+
+            const currentBankCodes = new Set<string>();
             if (hasBanks) {
               bankEnabled++;
               for (const bank of banks) {
-                const bankCode = String(bank?.code ?? bank?.bank_code ?? "").trim();
-                const bankName = String(bank?.name ?? bank?.bank_name ?? "").trim();
+                const bankCode = String(bank?.code ?? "").trim();
+                const bankName = String(bank?.name ?? "").trim();
 
                 if (bankCode) {
+                  currentBankCodes.add(bankCode);
                   await supabase
                     .from("payout_corridor_banks")
                     .upsert({
@@ -270,6 +300,16 @@ Deno.serve(async (req: Request) => {
                     }, { onConflict: "country_code,bank_code" });
                 }
               }
+            }
+
+            // Reconcile stale banks for this country only (never a global delete).
+            if (supportsBanks && !bankError) {
+              let staleQuery = supabase.from("payout_corridor_banks").delete().eq("country_code", code);
+              if (currentBankCodes.size > 0) {
+                const keepList = `(${[...currentBankCodes].map((b) => `"${b.replace(/"/g, '')}"`).join(",")})`;
+                staleQuery = staleQuery.not("bank_code", "in", keepList);
+              }
+              await staleQuery;
             }
 
             const result = { code, mobile_money: hasMobileMoney, banks: hasBanks, networks: networks.length, bank_count: banks.length, error: null as string | null };

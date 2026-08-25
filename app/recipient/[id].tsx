@@ -266,6 +266,22 @@ export default function RecipientDetailScreen() {
       null
     );
 
+  const [
+    verificationStatus,
+    setVerificationStatus,
+  ] =
+    useState<Recipient['verification_status']>(
+      'pending'
+    );
+
+  const [
+    validationErrorMessage,
+    setValidationErrorMessage,
+  ] =
+    useState<string | null>(
+      null
+    );
+
   /* =======================================================
      OPTIONS
      ======================================================= */
@@ -556,6 +572,16 @@ export default function RecipientDetailScreen() {
                 null
             );
 
+            setVerificationStatus(
+              data.verification_status ??
+                'pending'
+            );
+
+            setValidationErrorMessage(
+              data.validation_error_message ??
+                null
+            );
+
             await loadCountryOptions(
               data.country
             );
@@ -670,7 +696,8 @@ export default function RecipientDetailScreen() {
           .filter(
             (c) =>
               c.country_code ===
-              country
+              country &&
+              !!c.currency
           )
           .map((c) => ({
             code: c.currency,
@@ -686,8 +713,27 @@ export default function RecipientDetailScreen() {
     })
   );
 
+  const selectedCorridorCountry =
+    corridorCountries.find(
+      (c) => c.country_code === country
+    );
+
   const payoutMethods: string[] =
-    ['mobile_money', 'bank_account'];
+    !country
+      ? ['mobile_money', 'bank_account']
+      : [
+          ...(selectedCorridorCountry?.mobile_money_supported ? ['mobile_money'] : []),
+          ...(selectedCorridorCountry?.bank_supported ? ['bank_account'] : []),
+        ];
+
+  // Switch away from a receiving method the selected country no longer supports.
+  useEffect(() => {
+    if (!country || payoutMethods.length === 0) return;
+    if (!payoutMethods.includes(receivingMethod)) {
+      handleReceivingMethodChange(payoutMethods[0] as ReceivingMethod);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [country, selectedCorridorCountry?.mobile_money_supported, selectedCorridorCountry?.bank_supported]);
 
   /* =======================================================
      SELECT COUNTRY
@@ -925,6 +971,16 @@ export default function RecipientDetailScreen() {
         return;
       }
 
+      if (
+        !selectedCorridorCountry?.currency
+      ) {
+        setError(
+          'Destination currency is unavailable for this destination. Please try again later.'
+        );
+
+        return;
+      }
+
       /*
        * Currency is only required when Flutterwave
        * actually provides currency choices.
@@ -1088,8 +1144,8 @@ export default function RecipientDetailScreen() {
               : undefined,
             bankAccount: receivingMethod === 'bank_account'
               ? {
-                  accountNumber: accountNumber.trim(),
-                  bankCode: bankCode.trim(),
+                  account_number: accountNumber.trim(),
+                  bank_code: bankCode.trim(),
                   country,
                 }
               : undefined,
@@ -1100,9 +1156,17 @@ export default function RecipientDetailScreen() {
             : await updateFlutterwaveRecipient(flwParams);
 
           if (!flwResult.success) {
-            setError(
-              `Could not complete recipient setup: ${flwResult.error ?? 'Unknown error'}. The recipient was saved but cannot receive payouts yet. Open them again to retry.`
-            );
+            const title =
+              receivingMethod === 'mobile_money'
+                ? 'Mobile money details need updating'
+                : 'Bank details need updating';
+            const message =
+              receivingMethod === 'mobile_money'
+                ? "We couldn't verify the mobile money network for this recipient. Please select the correct mobile network and try again."
+                : "We couldn't verify the bank details for this recipient. Please check the bank and account number and try again.";
+            setVerificationStatus('needs_attention');
+            setValidationErrorMessage(message);
+            setError(`${title}. ${message}`);
             setSaving(false);
             return;
           }
@@ -1318,6 +1382,30 @@ export default function RecipientDetailScreen() {
                 }
               >
                 {error}
+              </Text>
+            </View>
+          )}
+
+          {/* NEEDS ATTENTION */}
+
+          {!isNew && verificationStatus === 'needs_attention' && (
+            <View
+              style={
+                styles.activePayoutWarningBox
+              }
+            >
+              <AlertCircle
+                color={
+                  Colors.error[600]
+                }
+                size={18}
+              />
+              <Text
+                style={
+                  styles.activePayoutWarningText
+                }
+              >
+                Needs attention: {validationErrorMessage ?? 'Update recipient details before using this recipient.'}
               </Text>
             </View>
           )}
@@ -1565,7 +1653,7 @@ export default function RecipientDetailScreen() {
 
           {country &&
             currencies.length >
-              0 && (
+              1 && (
               <>
                 <Text
                   style={
@@ -1663,6 +1751,14 @@ export default function RecipientDetailScreen() {
             Receiving method
           </Text>
 
+          {country && payoutMethods.length === 0 && (
+            <View style={styles.emptyOptionsBox}>
+              <Text style={styles.emptyOptionsText}>
+                No payout methods are currently available for this destination.
+              </Text>
+            </View>
+          )}
+
           <View
             style={
               styles.methodRow
@@ -1670,8 +1766,7 @@ export default function RecipientDetailScreen() {
           >
             {RECEIVING_METHODS.filter(
               (method) =>
-                method.value === 'mobile_money' ||
-                method.value === 'bank_account'
+                payoutMethods.includes(method.value)
             ).map(
               (
                 method
