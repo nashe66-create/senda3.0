@@ -161,17 +161,6 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({
           success: false,
           error: "Flutterwave sender creation failed",
-          flutterwave_status: senderResp.status,
-          flutterwave_response: senderData,
-          sender_request: {
-            type: "bank_gbp",
-            has_name: Boolean(senderPayload.name),
-            has_email: Boolean(senderPayload.email),
-            has_phone: Boolean(senderPayload.phone),
-            has_address: Boolean(senderPayload.address),
-            has_date_of_birth: Boolean(senderPayload.date_of_birth),
-            has_national_identification: Boolean(senderPayload.national_identification),
-          },
         }, 502);
       }
 
@@ -200,7 +189,7 @@ Deno.serve(async (req: Request) => {
         success: true,
         sender_id: senderId,
         kyc_status: "submitted",
-        message: "KYC submitted successfully. Verification status will be updated by Flutterwave.",
+        message: "KYC was submitted. Provider verification is pending confirmation.",
       });
     }
 

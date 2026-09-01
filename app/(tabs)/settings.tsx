@@ -49,7 +49,7 @@ export default function SettingsScreen() {
   const hasSenderId = Boolean(profile?.flutterwave_sender_id);
   const rawKycStatus = profile?.kyc_status ?? 'unverified';
   const kycStatus = rawKycStatus === 'verified' && !hasSenderId ? 'unverified' : rawKycStatus;
-  const needsVerification = kycStatus !== 'verified' || !hasSenderId;
+  const needsVerification = kycStatus !== 'rejected' && (kycStatus !== 'verified' || !hasSenderId);
 
   const kycConfig: Record<
     string,
@@ -81,7 +81,7 @@ export default function SettingsScreen() {
       color: Colors.error[600],
       bg: Colors.error[50],
       label: 'Verification Rejected',
-      desc: 'Your KYC was rejected. Please re-submit your documents.',
+      desc: 'Your KYC was rejected. Contact support before submitting another application.',
     },
     unverified: {
       icon: Shield,
@@ -169,7 +169,7 @@ export default function SettingsScreen() {
         >
           <Shield color="#fff" size={18} strokeWidth={2} />
           <Text style={styles.kycBtnText}>
-            {kycStatus === 'rejected' ? 'Re-submit KYC' : 'Start KYC Verification'}
+            Start KYC Verification
           </Text>
         </TouchableOpacity>
       )}

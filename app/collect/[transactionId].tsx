@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Loading } from '@/components/ui/Loading';
 import { Colors, Spacing, Typography } from '@/lib/theme';
-import { collectCard, authorizeCharge, verifyCharge, fetchPlanWithCommitments, createTransaction } from '@/lib/data';
+import { collectCard, authorizeCharge, verifyCharge } from '@/lib/data';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function CollectScreen() {
@@ -24,6 +24,7 @@ export default function CollectScreen() {
 
   const [planId, setPlanId] = useState<string | null>(null);
   const [amount, setAmount] = useState(0);
+  const [paymentReference, setPaymentReference] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +68,7 @@ export default function CollectScreen() {
 
         setPlanId(data.plan_id);
         setAmount(Number(data.amount_gbp));
+        setPaymentReference(data.payment_reference);
 
         if (data.next_action_type === 'requires_otp') {
           setChargeStatus('requires_otp');
@@ -88,16 +90,19 @@ export default function CollectScreen() {
   }, [transactionId]);
 
   const handlePay = async () => {
+    if (!paymentReference) {
+      setError('This transaction has no payment reference. Please return to the plan and start payment again.');
+      return;
+    }
     setError(null);
     setSubmitting(true);
     setChargeStatus('processing');
 
     try {
-      const reference = `SND-${Date.now()}`;
       const result = await collectCard({
         transaction_id: transactionId,
         amount,
-        reference,
+        reference: paymentReference,
         card: {
           number: cardNumber.replace(/\s/g, ''),
           cvv,

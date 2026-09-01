@@ -867,7 +867,7 @@ export default function PlanDetailScreen() {
           </View>
         )}
 
-        {!profile?.flutterwave_sender_id && plan.status !== 'draft' && (
+        {(!profile?.flutterwave_sender_id || profile.kyc_status !== 'verified') && plan.status !== 'draft' && (
           <TouchableOpacity onPress={() => router.push('/kyc')} style={styles.kycBanner}>
             <ShieldAlert color={Colors.warning[600]} size={20} strokeWidth={2} />
             <View style={styles.kycBannerText}>

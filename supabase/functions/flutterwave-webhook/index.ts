@@ -88,6 +88,53 @@ function customerFriendlyFailure(reason: string | null | undefined): string {
   return "The transfer could not be completed. Please try a different payout method or contact Senda support.";
 }
 
+async function webhookIdentity(event: any, eventType: string, data: any): Promise<string> {
+  if (event?.id ?? event?.webhook_id) return String(event.id ?? event.webhook_id);
+  const stableFields = [eventType, data?.id ?? data?.transfer_id ?? "", data?.reference ?? data?.transfer_reference ?? "", data?.status ?? "", event?.created_at ?? ""].join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stableFields));
+  return `fallback:${Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function findTransferAttempt(supabase: any, transferId: string | null, reference: string | null) {
+  let byTransfer: any = null;
+  let byReference: any = null;
+  if (transferId) {
+    const { data } = await supabase.from("transfer_attempts").select("id, commitment_id, status")
+      .eq("provider", "flutterwave").eq("provider_transfer_id", String(transferId)).maybeSingle();
+    byTransfer = data;
+  }
+  if (reference) {
+    const { data } = await supabase.from("transfer_attempts").select("id, commitment_id, status")
+      .eq("provider", "flutterwave").eq("provider_reference", reference).maybeSingle();
+    byReference = data;
+  }
+  if (byTransfer && byReference && byTransfer.id !== byReference.id) return null;
+  return byTransfer ?? byReference;
+}
+
+async function applyVerifiedTransferStatus(supabase: any, transferId: string, reference: string | null, transferData: any) {
+  const attempt = await findTransferAttempt(supabase, transferId, reference);
+  if (!attempt) return false;
+  const providerStatus = String(transferData?.status ?? "").toUpperCase();
+  const nextStatus = providerStatus === "COMPLETED" || providerStatus === "SUCCESSFUL" ? "completed"
+    : providerStatus === "FAILED" || providerStatus === "CANCELLED" ? "failed" : "processing";
+  const error = nextStatus === "failed" ? (transferData?.reversal?.reason ?? "Transfer failed") : null;
+  const activeStatuses = ["creating", "creating_unknown", "submitted", "confirming", "confirming_unknown", "processing", "reconciliation_required"];
+  const { data: updated } = await supabase.from("transfer_attempts").update({
+    provider_transfer_id: String(transferId), provider_status: providerStatus,
+    status: nextStatus, last_checked_at: new Date().toISOString(),
+    completed_at: nextStatus === "completed" ? new Date().toISOString() : null,
+    failed_at: nextStatus === "failed" ? new Date().toISOString() : null,
+    error_message: error,
+  }).eq("id", attempt.id).in("status", activeStatuses).select("commitment_id").maybeSingle();
+  if (!updated) return true;
+  await supabase.from("commitments").update({
+    flutterwave_transfer_id: String(transferId), provider_status: providerStatus, status: nextStatus,
+    failure_reason: error, failure_reason_display: nextStatus === "failed" ? customerFriendlyFailure(error) : null,
+  }).eq("id", updated.commitment_id).in("status", activeStatuses);
+  return true;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -145,8 +192,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const eventType = String(event?.type ?? "").toLowerCase();
-    const webhookId = event?.id ?? event?.webhook_id ?? null;
     const data = event?.data ?? {};
+    const webhookId = await webhookIdentity(event, eventType, data);
 
     console.log("Flutterwave webhook received:", JSON.stringify({
       event_type: eventType,
@@ -160,30 +207,20 @@ Deno.serve(async (req: Request) => {
     }
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // Deduplicate: check if we've already processed this webhook
-    if (webhookId) {
-      const { data: existing } = await supabase
-        .from("flutterwave_webhook_events")
-        .select("webhook_id")
-        .eq("webhook_id", String(webhookId))
-        .maybeSingle();
-
-      if (existing) {
-        console.log("Duplicate webhook, skipping:", webhookId);
+    // Insert first; the primary key is the concurrency-safe deduplication claim.
+    const { error: dedupError } = await supabase.from("flutterwave_webhook_events").insert({
+      webhook_id: webhookId,
+      event_type: eventType,
+      payload: event,
+    });
+    if (dedupError) {
+      if (dedupError.code === "23505") {
         return new Response(JSON.stringify({ received: true, duplicate: true }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-
-      // Insert the event for deduplication
-      await supabase
-        .from("flutterwave_webhook_events")
-        .insert({
-          webhook_id: String(webhookId),
-          event_type: eventType,
-          payload: event,
-        });
+      throw dedupError;
     }
 
     const accessToken = await getAccessToken();
@@ -205,61 +242,50 @@ Deno.serve(async (req: Request) => {
             const chargeStatus = String(chargeData.status ?? "").toLowerCase();
 
             if (chargeStatus === "succeeded") {
-              const updateData: Record<string, unknown> = {
-                status: "successful",
-                completed_at: new Date().toISOString(),
-                flutterwave_charge_id: String(chargeId),
-              };
-              if (chargeData.card?.last_4) updateData.card_last4 = chargeData.card.last_4;
-              if (chargeData.card?.network) updateData.card_network = chargeData.card.network;
-
-              await supabase
-                .from("transactions")
-                .update(updateData)
-                .eq("payment_reference", reference);
-
-              // Transition plan to FUNDED — the funding gate
               const { data: transaction } = await supabase
                 .from("transactions")
-                .select("plan_id")
+                .select("id, plan_id, amount_gbp, payment_reference")
                 .eq("payment_reference", reference)
                 .maybeSingle();
 
               if (transaction?.plan_id) {
                 const { data: plan } = await supabase
                   .from("plans")
-                  .select("id, status, customer_pays")
+                  .select("id, status, quote_locked_at, customer_pays")
                   .eq("id", transaction.plan_id)
                   .maybeSingle();
 
-                if (plan && (plan.status === "payment_processing" || plan.status === "awaiting_payment")) {
-                  const amountMatches = Math.abs(Number(chargeData.amount) - Number(plan.customer_pays)) <= 0.01;
-                  const currencyMatches = String(chargeData.currency ?? "GBP").toUpperCase() === "GBP";
+                const amountMatches = Number(chargeData.amount) === Number(transaction.amount_gbp)
+                  && plan && Math.abs(Number(chargeData.amount) - Number(plan.customer_pays)) <= 0.01;
+                const referenceMatches = chargeData.reference === transaction.payment_reference;
+                const currencyMatches = String(chargeData.currency ?? "GBP").toUpperCase() === "GBP";
+                const fundingVerified = plan?.quote_locked_at && amountMatches && referenceMatches && currencyMatches;
 
-                  if (amountMatches && currencyMatches) {
-                    await supabase
-                      .from("plans")
-                      .update({
-                        payment_status: "successful",
-                        status: "funded",
-                      })
-                      .eq("id", transaction.plan_id);
-                  } else {
-                    await supabase
-                      .from("plans")
-                      .update({
-                        payment_status: "failed",
-                        status: "payment_failed",
-                      })
-                      .eq("id", transaction.plan_id);
-                  }
+                if (fundingVerified) {
+                  const updateData: Record<string, unknown> = {
+                    status: "successful",
+                    completed_at: new Date().toISOString(),
+                    flutterwave_charge_id: String(chargeId),
+                  };
+                  if (chargeData.card?.last_4) updateData.card_last4 = chargeData.card.last_4;
+                  if (chargeData.card?.network) updateData.card_network = chargeData.card.network;
+                  await supabase.from("transactions").update(updateData)
+                    .eq("id", transaction.id)
+                    .eq("status", "pending");
+                  await supabase.from("plans").update({ payment_status: "successful", status: "funded" })
+                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing"]);
+                } else {
+                  await supabase.from("transactions").update({ status: "failed" }).eq("id", transaction.id);
+                  await supabase.from("plans").update({ payment_status: "failed", status: "payment_failed" })
+                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing"]);
                 }
               }
             } else if (chargeStatus === "failed") {
               await supabase
                 .from("transactions")
                 .update({ status: "failed" })
-                .eq("payment_reference", reference);
+                .eq("payment_reference", reference)
+                .eq("status", "pending");
 
               // Transition plan to payment_failed
               const { data: transaction } = await supabase
@@ -275,7 +301,8 @@ Deno.serve(async (req: Request) => {
                     payment_status: "failed",
                     status: "payment_failed",
                   })
-                  .eq("id", transaction.plan_id);
+                  .eq("id", transaction.plan_id)
+                  .in("status", ["awaiting_payment", "payment_processing"]);
               }
             }
           }
@@ -289,9 +316,14 @@ Deno.serve(async (req: Request) => {
     if (eventType === "transfer.disburse") {
       const reference = data?.reference ?? data?.transfer_reference ?? null;
       const transferId = data?.id ?? data?.transfer_id ?? null;
-      const status = String(data?.status ?? "").toUpperCase();
+      if (transferId) {
+        const { ok, data: verifyData } = await flutterwaveGet(accessToken, `/transfers/${transferId}`);
+        if (ok && verifyData?.data) {
+          await applyVerifiedTransferStatus(supabase, String(transferId), reference, verifyData.data);
+        }
+      }
 
-      if (reference) {
+      if (false && reference) {
         // Re-verify via GET /transfers/{id}
         if (transferId) {
           const { ok, data: verifyData } = await flutterwaveGet(accessToken, `/transfers/${transferId}`);
@@ -338,7 +370,14 @@ Deno.serve(async (req: Request) => {
       const reference = data?.reference ?? data?.transfer_reference ?? null;
       const transferId = data?.id ?? data?.transfer_id ?? null;
 
-      if (reference || transferId) {
+      if (transferId) {
+        const { ok, data: verifyData } = await flutterwaveGet(accessToken, `/transfers/${transferId}`);
+        if (ok && verifyData?.data) {
+          await applyVerifiedTransferStatus(supabase, String(transferId), reference, verifyData.data);
+        }
+      }
+
+      if (false && (reference || transferId)) {
         const rawReason = data?.reversal?.reason ?? "Transfer reversed";
         const updateData: Record<string, unknown> = {
           status: "failed",

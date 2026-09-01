@@ -56,6 +56,13 @@ function customerFriendlyFailure(reason: string | null | undefined): string {
   return "The transfer could not be completed. Please try a different payout method or contact Senda support.";
 }
 
+function mapTransferStatus(providerStatus: string): string {
+  if (providerStatus === "COMPLETED" || providerStatus === "SUCCESSFUL") return "completed";
+  if (providerStatus === "FAILED" || providerStatus === "CANCELLED") return "failed";
+  if (providerStatus === "NEW" || providerStatus === "PENDING") return "submitted";
+  return "processing";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -86,7 +93,8 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Missing commitment_id parameter" }, 400);
     }
 
-    // Look up the transfer ID from the commitment
+    // Find the latest non-terminal attempt. A missing provider ID is an
+    // unknown outcome, never evidence that Flutterwave did not create it.
     const { data: commitment } = await supabase
       .from("commitments")
       .select("flutterwave_transfer_id, status, user_id")
@@ -98,14 +106,35 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Commitment not found" }, 404);
     }
 
-    if (!commitment.flutterwave_transfer_id) {
-      return jsonResponse({ success: false, error: "No transfer ID found for this commitment" }, 400);
+    const activeStatuses = ["creating_unknown", "submitted", "confirming_unknown", "processing", "reconciliation_required"];
+    const { data: attempt } = await serviceClient
+      .from("transfer_attempts")
+      .select("id, provider_transfer_id, status")
+      .eq("commitment_id", commitmentId)
+      .in("status", activeStatuses)
+      .order("attempt_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!attempt?.provider_transfer_id) {
+      if (attempt) {
+        await serviceClient.from("transfer_attempts")
+          .update({ status: "reconciliation_required", last_checked_at: new Date().toISOString() })
+          .eq("id", attempt.id).in("status", activeStatuses);
+        await serviceClient.from("commitments")
+          .update({ status: "reconciliation_required" })
+          .eq("id", commitmentId).in("status", activeStatuses);
+      }
+      return jsonResponse({
+        success: false,
+        error: "This payout has no recorded provider transfer ID and requires provider-reference reconciliation. No retry was created.",
+      }, 409);
     }
 
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      `${FLW_BASE_URL}/transfers/${encodeURIComponent(commitment.flutterwave_transfer_id)}`,
+      `${FLW_BASE_URL}/transfers/${encodeURIComponent(attempt.provider_transfer_id)}`,
       {
         method: "GET",
         headers: {
@@ -132,28 +161,35 @@ Deno.serve(async (req: Request) => {
     const transferData = data?.data ?? {};
     const transferStatus = String(transferData.status ?? "").toUpperCase();
 
-    // Map Flutterwave status to our DB status
-    let dbStatus = commitment.status;
-    if (transferStatus === "COMPLETED" || transferStatus === "SUCCESSFUL") {
-      dbStatus = "completed";
-    } else if (transferStatus === "FAILED" || transferStatus === "CANCELLED") {
-      dbStatus = "failed";
-    }
+    // A verified provider response resolves an unknown attempt without retrying it.
+    const dbStatus = mapTransferStatus(transferStatus);
 
     // Update commitment if status changed
-    if (dbStatus !== commitment.status) {
-      const updateData: Record<string, unknown> = { status: dbStatus, provider_status: transferStatus };
+    if (dbStatus !== attempt.status) {
+      const attemptUpdate: Record<string, unknown> = { status: dbStatus, provider_status: transferStatus };
+      const commitmentUpdate: Record<string, unknown> = { status: dbStatus, provider_status: transferStatus };
       if (dbStatus === "failed") {
         const rawReason = transferData?.reversal?.reason ?? "Transfer failed";
-        updateData.failure_reason = rawReason;
-        updateData.failure_reason_display = customerFriendlyFailure(rawReason);
+        attemptUpdate.error_message = rawReason;
+        commitmentUpdate.failure_reason = rawReason;
+        commitmentUpdate.failure_reason_display = customerFriendlyFailure(rawReason);
       }
       await serviceClient
+        .from("transfer_attempts")
+        .update(attemptUpdate)
+        .eq("id", attempt.id)
+        .in("status", activeStatuses);
+
+      await serviceClient
         .from("commitments")
-        .update(updateData)
+        .update(commitmentUpdate)
         .eq("id", commitmentId)
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        .in("status", activeStatuses);
     }
+
+    await serviceClient.from("transfer_attempts")
+      .update({ last_checked_at: new Date().toISOString() }).eq("id", attempt.id);
 
     return jsonResponse({
       success: true,

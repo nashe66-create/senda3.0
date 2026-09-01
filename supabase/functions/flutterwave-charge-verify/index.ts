@@ -124,7 +124,6 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         success: false,
         error: "Failed to verify charge with Flutterwave",
-        flutterwave_response: data,
       }, 502);
     }
 
@@ -139,8 +138,31 @@ Deno.serve(async (req: Request) => {
     let verified = false;
 
     if (chargeStatus === "succeeded" && amountMatches && referenceMatches) {
-      dbStatus = "successful";
-      verified = true;
+      const { data: plan } = await serviceClient
+        .from("plans")
+        .select("id, status, quote_locked_at, customer_pays")
+        .eq("id", transaction.plan_id)
+        .maybeSingle();
+      const amountMatchesQuote = plan && Math.abs(Number(chargeData.amount) - Number(plan.customer_pays)) <= 0.01;
+      const currencyMatches = String(chargeData.currency ?? "GBP").toUpperCase() === "GBP";
+
+      if (plan?.quote_locked_at && amountMatchesQuote && currencyMatches) {
+        dbStatus = "successful";
+        verified = true;
+        await serviceClient
+          .from("plans")
+          .update({ payment_status: "successful", status: "funded" })
+          .eq("id", transaction.plan_id)
+          .in("status", ["awaiting_payment", "payment_processing"]);
+      } else {
+        dbStatus = "failed";
+        verified = true;
+        await serviceClient
+          .from("plans")
+          .update({ payment_status: "failed", status: "payment_failed" })
+          .eq("id", transaction.plan_id)
+          .in("status", ["awaiting_payment", "payment_processing"]);
+      }
     } else if (chargeStatus === "failed") {
       dbStatus = "failed";
       verified = true;
@@ -159,50 +181,15 @@ Deno.serve(async (req: Request) => {
         .update(updateData)
         .eq("id", transactionId);
 
-      // If payment is successful, verify against locked quote and transition plan to FUNDED
-      if (dbStatus === "successful" && transaction.plan_id) {
-        const { data: plan } = await serviceClient
-          .from("plans")
-          .select("id, status, quote_locked_at, customer_pays, payment_status")
-          .eq("id", transaction.plan_id)
-          .maybeSingle();
-
-        if (plan) {
-          // Verify amount matches locked customer_pays
-          const amountMatchesQuote = Math.abs(Number(chargeData.amount) - Number(plan.customer_pays)) <= 0.01;
-          const currencyMatches = String(chargeData.currency ?? "GBP").toUpperCase() === "GBP";
-
-          if (amountMatchesQuote && currencyMatches) {
-            await serviceClient
-              .from("plans")
-              .update({
-                payment_status: "successful",
-                status: "funded",
-              })
-              .eq("id", transaction.plan_id);
-          } else {
-            console.error("Charge verification: amount or currency mismatch with locked quote", {
-              charge_amount: chargeData.amount,
-              locked_customer_pays: plan.customer_pays,
-              charge_currency: chargeData.currency,
-            });
-            await serviceClient
-              .from("plans")
-              .update({
-                payment_status: "failed",
-                status: "payment_failed",
-              })
-              .eq("id", transaction.plan_id);
-          }
-        }
-      } else if (dbStatus === "failed" && transaction.plan_id) {
+      if (dbStatus === "failed" && transaction.plan_id && chargeStatus === "failed") {
         await serviceClient
           .from("plans")
           .update({
             payment_status: "failed",
             status: "payment_failed",
           })
-          .eq("id", transaction.plan_id);
+          .eq("id", transaction.plan_id)
+          .in("status", ["awaiting_payment", "payment_processing"]);
       }
     }
 
@@ -213,7 +200,6 @@ Deno.serve(async (req: Request) => {
       charge_status: chargeStatus,
       amount_matches: amountMatches,
       reference_matches: referenceMatches,
-      flutterwave_response: data,
     });
   } catch (error) {
     console.error("Flutterwave charge-verify error:", error);

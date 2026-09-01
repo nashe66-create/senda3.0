@@ -2,7 +2,7 @@
    CORE APP TYPES
    ========================================================= */
 
-export type KycStatus = 'unverified' | 'submitted' | 'pending' | 'verified' | 'rejected';
+export type KycStatus = 'unverified' | 'submitted' | 'pending' | 'provider_status_unknown' | 'verified' | 'rejected';
 
 export type PricingMode = 'fixed_source' | 'fixed_destination';
 

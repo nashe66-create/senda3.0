@@ -136,14 +136,14 @@ Deno.serve(async (req: Request) => {
     // Build authorization payload based on type
     let authorization: Record<string, unknown> = {};
     if (payload.type === "otp" && payload.otp) {
-      authorization = { mode: "otp", otp: payload.otp.code };
+      authorization = { type: "otp", otp: { code: payload.otp.code } };
     } else if (payload.type === "pin" && payload.pin) {
       authorization = {
-        mode: "pin",
-        pin: { nonce: payload.pin.nonce, encrypted_pin: payload.pin.encrypted_pin },
+        type: "pin",
+        pin: payload.pin.encrypted_pin,
       };
     } else if (payload.type === "address" && payload.address) {
-      authorization = { mode: "avs", address: payload.address };
+      authorization = { type: "avs", avs: { address: payload.address } };
     } else {
       return jsonResponse({ success: false, error: "Invalid authorization type or missing fields" }, 400);
     }
@@ -159,10 +159,7 @@ Deno.serve(async (req: Request) => {
     const nextActionType = data?.data?.next_action?.type ?? null;
     const updateData: Record<string, unknown> = { next_action_type: nextActionType };
 
-    if (data?.data?.status === "succeeded") {
-      updateData.status = "successful";
-      updateData.completed_at = new Date().toISOString();
-    } else if (data?.data?.status === "failed") {
+    if (data?.data?.status === "failed") {
       updateData.status = "failed";
     }
 
@@ -178,38 +175,21 @@ Deno.serve(async (req: Request) => {
       .update(updateData)
       .eq("id", payload.transaction_id);
 
-    // If charge succeeded, transition plan to funded
-    if (data?.data?.status === "succeeded" && transaction.plan_id) {
-      const { data: plan } = await serviceClient
-        .from("plans")
-        .select("id, status, customer_pays")
-        .eq("id", transaction.plan_id)
-        .maybeSingle();
-
-      if (plan && plan.status === "payment_processing") {
-        await serviceClient
-          .from("plans")
-          .update({
-            payment_status: "successful",
-            status: "funded",
-          })
-          .eq("id", transaction.plan_id);
-      }
-    } else if (data?.data?.status === "failed" && transaction.plan_id) {
+    if (data?.data?.status === "failed" && transaction.plan_id) {
       await serviceClient
         .from("plans")
         .update({
           payment_status: "failed",
           status: "payment_failed",
         })
-        .eq("id", transaction.plan_id);
+        .eq("id", transaction.plan_id)
+        .in("status", ["awaiting_payment", "payment_processing"]);
     }
 
     return jsonResponse({
       success: response.ok,
       status: data?.data?.status ?? null,
       next_action: data?.data?.next_action ?? null,
-      flutterwave_response: data,
     }, response.status);
   } catch (error) {
     console.error("Flutterwave charge-authorize error:", error);

@@ -110,6 +110,11 @@ Deno.serve(async (req: Request) => {
     const userId = user.id;
     const serviceClient = createClient(supabaseUrl, serviceRoleKey);
 
+    return jsonResponse({
+      success: false,
+      error: "This endpoint is disabled. Use senda-orchestrate for the payout lifecycle.",
+    }, 410);
+
     // =======================================================
     // CREATE TRANSFER
     // POST ?action=create
@@ -314,7 +319,7 @@ Deno.serve(async (req: Request) => {
 
       const { response, data } = await flutterwaveRequest(
         accessToken, "PUT", `/transfers/${commitment.flutterwave_transfer_id}`,
-        { action: "instant" },
+        { initiate: true },
       );
 
       const transferStatus = data?.data?.status ?? null;

@@ -64,14 +64,7 @@ export default function KycScreen() {
       });
 
       if (!result.success) {
-        let msg = result.error ?? 'KYC submission failed';
-        if (result.flutterwave_response) {
-          msg += `\n\nFlutterwave response: ${JSON.stringify(result.flutterwave_response)}`;
-        }
-        if (result.sender_request) {
-          msg += `\n\nFields sent: ${JSON.stringify(result.sender_request)}`;
-        }
-        setError(msg);
+        setError(result.error ?? 'KYC submission failed');
         return;
       }
 

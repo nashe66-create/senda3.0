@@ -437,8 +437,6 @@ export async function createTransaction(
       plan_id: planId,
       amount_gbp: amountGbp,
       status: 'pending',
-      payment_reference:
-        `SND-${Date.now()}`,
     })
     .select(
       '*, plan:plans(*)'
@@ -953,9 +951,6 @@ export async function submitKyc(payload: {
   sender_id?: string;
   kyc_status?: string;
   error?: string;
-  flutterwave_status?: number;
-  flutterwave_response?: unknown;
-  sender_request?: Record<string, boolean>;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -980,9 +975,6 @@ export async function submitKyc(payload: {
     return {
       success: false,
       error: data?.error ?? 'KYC submission failed',
-      flutterwave_status: data?.flutterwave_status,
-      flutterwave_response: data?.flutterwave_response,
-      sender_request: data?.sender_request,
     };
   }
   return data;

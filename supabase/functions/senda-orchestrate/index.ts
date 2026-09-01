@@ -53,7 +53,7 @@ async function flutterwaveRequest(accessToken: string, method: string, path: str
     "Content-Type": "application/json",
     "X-Trace-Id": crypto.randomUUID(),
   };
-  if (method === "POST" && idempotencyKey) {
+  if (idempotencyKey) {
     headers["X-Idempotency-Key"] = idempotencyKey;
   }
 
@@ -106,6 +106,228 @@ function customerFriendlyFailure(reason: string | null | undefined): string {
     return "Additional verification is required for this transfer. Please contact Senda support.";
   }
   return "The transfer could not be completed. Please try a different payout method or contact Senda support.";
+}
+
+async function verifiedSenderId(supabase: any, userId: string): Promise<string | null> {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("flutterwave_sender_id, kyc_status")
+    .eq("id", userId)
+    .maybeSingle();
+  return profile?.kyc_status === "verified" && profile?.flutterwave_sender_id
+    ? profile.flutterwave_sender_id
+    : null;
+}
+
+async function requireTransferReconciliation(
+  serviceClient: any,
+  attemptId: string,
+  commitmentId: string,
+  errorMessage: string,
+) {
+  const activeStatuses = ["creating", "creating_unknown", "submitted", "confirming", "confirming_unknown", "processing"];
+  await serviceClient
+    .from("transfer_attempts")
+    .update({ status: "reconciliation_required", error_message: errorMessage, last_checked_at: new Date().toISOString() })
+    .eq("id", attemptId)
+    .in("status", activeStatuses);
+  await serviceClient
+    .from("commitments")
+    .update({ status: "reconciliation_required" })
+    .eq("id", commitmentId)
+    .in("status", activeStatuses);
+}
+
+async function createAttemptTransfer(
+  supabase: any,
+  serviceClient: any,
+  accessToken: string,
+  userId: string,
+  commitmentId: string,
+  payoutMethod: string,
+  isRetry: boolean,
+) {
+  const senderId = await verifiedSenderId(supabase, userId);
+  if (!senderId) return { success: false, error: "Payouts require an authoritative KYC verification signal. Sender creation alone is not sufficient." };
+
+  const { data: claimed, error: claimError } = await supabase.rpc("claim_transfer_creation", {
+    p_commitment_id: commitmentId,
+    p_payout_method: payoutMethod,
+    p_request_fingerprint: `${payoutMethod}:${commitmentId}`,
+    p_is_retry: isRetry,
+  });
+  const attempt = claimed?.[0];
+  if (claimError || !attempt) {
+    return { success: false, error: "This payout is no longer eligible to be submitted. It may already be in progress or require reconciliation." };
+  }
+
+  const snapshot = attempt.recipient_snapshot as any;
+  if (!snapshot?.flutterwave_recipient_id) {
+    const { error: recordError } = await serviceClient.rpc("record_transfer_creation_result", {
+      p_attempt_id: attempt.attempt_id,
+      p_provider_transfer_id: null,
+      p_provider_status: null,
+      p_definitive_failure: true,
+      p_error_message: "Recipient is not valid for a Flutterwave payout.",
+    });
+    if (recordError) {
+      await requireTransferReconciliation(
+        serviceClient,
+        attempt.attempt_id,
+        commitmentId,
+        "Recipient validation result could not be recorded and requires reconciliation.",
+      );
+    }
+    return { success: false, error: "Recipient is not valid for a Flutterwave payout." };
+  }
+
+  const transferPayload = {
+    action: "deferred",
+    reference: attempt.provider_reference,
+    narration: `Senda transfer to ${snapshot.name ?? "recipient"}`,
+    payment_instruction: {
+      recipient_id: snapshot.flutterwave_recipient_id,
+      source_currency: "GBP",
+      amount: { applies_to: "source_currency", value: Number(attempt.amount_gbp) },
+      sender_id: senderId,
+    },
+  };
+
+  try {
+    const { response, data } = await flutterwaveRequest(
+      accessToken, "POST", "/transfers", transferPayload, attempt.idempotency_key,
+    );
+    const transferId = data?.data?.id ? String(data.data.id) : null;
+    const providerStatus = data?.data?.status ?? null;
+    const { error: recordError } = await serviceClient.rpc("record_transfer_creation_result", {
+      p_attempt_id: attempt.attempt_id,
+      p_provider_transfer_id: transferId,
+      p_provider_status: providerStatus,
+      p_definitive_failure: !response.ok,
+      p_error_message: response.ok ? null : (data?.message ?? "Transfer creation was rejected"),
+    });
+    if (recordError) {
+      await requireTransferReconciliation(
+        serviceClient,
+        attempt.attempt_id,
+        commitmentId,
+        "Transfer creation result could not be recorded and requires reconciliation.",
+      );
+      return { success: false, error: "Transfer creation outcome requires reconciliation before any retry." };
+    }
+    if (!response.ok || !transferId) {
+      return { success: false, error: response.ok ? "Flutterwave returned no transfer ID; reconciliation is required." : customerFriendlyFailure(data?.message) };
+    }
+    return { success: true, transfer_id: transferId, status: providerStatus };
+  } catch (error) {
+    const { error: recordError } = await serviceClient.rpc("record_transfer_creation_result", {
+      p_attempt_id: attempt.attempt_id,
+      p_provider_transfer_id: null,
+      p_provider_status: null,
+      p_definitive_failure: false,
+      p_error_message: error instanceof Error ? error.message : "Transfer creation outcome is unknown",
+    });
+    if (recordError) {
+      await requireTransferReconciliation(
+        serviceClient,
+        attempt.attempt_id,
+        commitmentId,
+        "Transfer creation outcome could not be recorded and requires reconciliation.",
+      );
+    }
+    return { success: false, error: "Transfer submission outcome is unknown and requires reconciliation before any retry." };
+  }
+}
+
+async function releaseAttemptBackedPayouts(supabase: any, serviceClient: any, accessToken: string, userId: string, planId: string) {
+  const { data: plan } = await supabase.from("plans")
+    .select("id, status, payment_status, quote_locked_at, destination_country")
+    .eq("id", planId).eq("user_id", userId).maybeSingle();
+  if (!plan || plan.status !== "funded" || plan.payment_status !== "successful" || !plan.quote_locked_at) {
+    return jsonResponse({ success: false, error: "Payouts can only be released for a funded order with a locked quote" }, 400);
+  }
+  const { data: commitments } = await serviceClient.from("commitments")
+    .select("id, payout_method, recipient_snapshot").eq("plan_id", planId).in("status", ["ready", "pending"]);
+  if (!commitments?.length) return jsonResponse({ success: false, error: "No ready payouts to release" }, 400);
+
+  const { data: corridor } = await serviceClient.from("payout_corridor_countries")
+    .select("mobile_money_supported, cash_pickup_supported, bank_supported")
+    .eq("country_code", plan.destination_country ?? "").maybeSingle();
+  const payouts: any[] = [];
+  for (const commitment of commitments) {
+    const supported = corridor && (
+      commitment.payout_method === "bank" ? corridor.bank_supported :
+      commitment.payout_method === "mobile_money" ? corridor.mobile_money_supported : false
+    );
+    if (!supported) {
+      const error = "The selected payout method is not supported for this corridor.";
+      await serviceClient.from("commitments").update({ status: "failed", failure_reason: error, failure_reason_display: error })
+        .eq("id", commitment.id).in("status", ["ready", "pending"]);
+      payouts.push({ commitment_id: commitment.id, status: "failed", error });
+      continue;
+    }
+    const result = await createAttemptTransfer(supabase, serviceClient, accessToken, userId, commitment.id, commitment.payout_method, false);
+    payouts.push({ commitment_id: commitment.id, ...result });
+  }
+  const submitted = payouts.filter((p) => p.success).length;
+  const failed = payouts.length - submitted;
+  return jsonResponse({ success: true, plan_id: planId, total: payouts.length, submitted, failed, skipped: 0, errors: payouts.filter((p) => p.error).map((p) => p.error), payouts });
+}
+
+async function confirmAttemptBackedPayouts(supabase: any, serviceClient: any, accessToken: string, planId: string) {
+  const { data: commitments } = await serviceClient.from("commitments").select("id").eq("plan_id", planId).eq("status", "submitted");
+  if (!commitments?.length) return jsonResponse({ success: false, error: "No submitted payouts to confirm" }, 400);
+  const payouts: any[] = [];
+  for (const commitment of commitments) {
+    const { data: claimed } = await supabase.rpc("claim_transfer_confirmation", { p_commitment_id: commitment.id });
+    const attempt = claimed?.[0];
+    if (!attempt) continue;
+    try {
+      const { response, data } = await flutterwaveRequest(
+        accessToken,
+        "PUT",
+        `/transfers/${attempt.provider_transfer_id}`,
+        { initiate: true },
+        `SENDA-PAYOUT-CONFIRM-${attempt.attempt_id}`,
+      );
+      const { error: recordError } = await serviceClient.rpc("record_transfer_confirmation_result", {
+        p_attempt_id: attempt.attempt_id,
+        p_provider_status: data?.data?.status ?? null,
+        p_definitive_failure: !response.ok,
+        p_error_message: response.ok ? null : (data?.message ?? "Transfer confirmation was rejected"),
+      });
+      if (recordError) {
+        await requireTransferReconciliation(
+          serviceClient,
+          attempt.attempt_id,
+          commitment.id,
+          "Transfer confirmation result could not be recorded and requires reconciliation.",
+        );
+        payouts.push({ commitment_id: commitment.id, status: "reconciliation_required", error: "Confirmation outcome requires reconciliation before any retry." });
+        continue;
+      }
+      payouts.push({ commitment_id: commitment.id, status: data?.data?.status ?? (response.ok ? "processing" : "failed") });
+    } catch (error) {
+      const { error: recordError } = await serviceClient.rpc("record_transfer_confirmation_result", {
+        p_attempt_id: attempt.attempt_id, p_provider_status: null, p_definitive_failure: false,
+        p_error_message: error instanceof Error ? error.message : "Transfer confirmation outcome is unknown",
+      });
+      if (recordError) {
+        await requireTransferReconciliation(
+          serviceClient,
+          attempt.attempt_id,
+          commitment.id,
+          "Transfer confirmation outcome could not be recorded and requires reconciliation.",
+        );
+        payouts.push({ commitment_id: commitment.id, status: "reconciliation_required", error: "Confirmation outcome requires reconciliation before any retry." });
+      } else {
+        payouts.push({ commitment_id: commitment.id, status: "confirming_unknown", error: "Confirmation outcome is unknown and requires reconciliation." });
+      }
+    }
+  }
+  return jsonResponse({ success: true, plan_id: planId, total: commitments.length,
+    confirmed: payouts.filter((p) => p.status === "COMPLETED" || p.status === "SUCCESSFUL").length,
+    failed: payouts.filter((p) => p.status === "failed").length, errors: payouts.filter((p) => p.error).map((p) => p.error), payouts });
 }
 
 Deno.serve(async (req: Request) => {
@@ -276,6 +498,8 @@ Deno.serve(async (req: Request) => {
       if (!payload.plan_id) {
         return jsonResponse({ success: false, error: "Missing plan_id" }, 400);
       }
+
+      return await releaseAttemptBackedPayouts(supabase, serviceClient, await getAccessToken(), userId, payload.plan_id);
 
       const { data: plan, error: planError } = await supabase
         .from("plans")
@@ -564,6 +788,8 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Missing plan_id" }, 400);
       }
 
+      return await confirmAttemptBackedPayouts(supabase, serviceClient, await getAccessToken(), payload.plan_id);
+
       const { data: plan } = await supabase
         .from("plans")
         .select("id, status, user_id")
@@ -620,7 +846,7 @@ Deno.serve(async (req: Request) => {
         try {
           const { response, data } = await flutterwaveRequest(
             accessToken, "PUT", `/transfers/${c.flutterwave_transfer_id}`,
-            { action: "instant" }
+            { initiate: true }
           );
 
           const flwStatus = data?.data?.status ?? "";
@@ -687,6 +913,19 @@ Deno.serve(async (req: Request) => {
       if (!payload.commitment_id || !payload.payout_method) {
         return jsonResponse({ success: false, error: "Missing commitment_id or payout_method" }, 400);
       }
+
+      const { data: retryCommitment } = await supabase
+        .from("commitments")
+        .select("plan_id, payout_method")
+        .eq("id", payload.commitment_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!retryCommitment) return jsonResponse({ success: false, error: "Commitment not found" }, 404);
+      const retryResult = await createAttemptTransfer(
+        supabase, serviceClient, await getAccessToken(), userId,
+        payload.commitment_id, payload.payout_method, true,
+      );
+      return jsonResponse(retryResult, retryResult.success ? 200 : 409);
 
       const { data: commitment } = await supabase
         .from("commitments")
@@ -825,7 +1064,7 @@ Deno.serve(async (req: Request) => {
           // Confirm immediately since order is already funded
           const { data: confirmData } = await flutterwaveRequest(
             accessToken, "PUT", `/transfers/${String(transferId)}`,
-            { action: "instant" }
+            { initiate: true }
           );
 
           const confirmFlwStatus = confirmData?.data?.status ?? "";
