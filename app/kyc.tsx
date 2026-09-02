@@ -22,6 +22,7 @@ export default function KycScreen() {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sandboxVerification, setSandboxVerification] = useState(false);
 
   const [firstName, setFirstName] = useState(profile?.full_name?.split(' ')[0] ?? '');
   const [lastName, setLastName] = useState(profile?.full_name?.split(' ').slice(1).join(' ') ?? '');
@@ -69,7 +70,11 @@ export default function KycScreen() {
       }
 
       await refreshProfile();
-      router.replace('/(tabs)/');
+      if (result.verification_mode === 'sandbox') {
+        setSandboxVerification(true);
+      } else {
+        router.replace('/(tabs)/');
+      }
     } catch (e: any) {
       setError(e?.message ?? 'Failed to submit KYC');
     } finally {
@@ -107,6 +112,12 @@ export default function KycScreen() {
         {error && (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {sandboxVerification && (
+          <View style={styles.successBox}>
+            <Text style={styles.successText}>KYC verified for sandbox testing</Text>
           </View>
         )}
 
@@ -219,6 +230,8 @@ const styles = StyleSheet.create({
   stepDesc: { ...Typography.body, color: Colors.neutral[500], textAlign: 'center', marginBottom: Spacing.lg, lineHeight: 22 },
   errorBox: { backgroundColor: Colors.error[50], borderRadius: 12, padding: Spacing.md, marginBottom: Spacing.md },
   errorText: { ...Typography.body, color: Colors.error[600], fontSize: 13, lineHeight: 18 },
+  successBox: { backgroundColor: Colors.success[50], borderRadius: 12, padding: Spacing.md, marginBottom: Spacing.md },
+  successText: { ...Typography.body, color: Colors.success[600], fontSize: 13, lineHeight: 18 },
   label: { ...Typography.label, color: Colors.neutral[700], marginBottom: 8, alignSelf: 'flex-start', marginLeft: 4 },
   pickerRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.md, flexWrap: 'wrap' },
   pickerOption: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1.5, borderColor: Colors.neutral[300], backgroundColor: '#fff' },

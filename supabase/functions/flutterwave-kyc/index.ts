@@ -8,10 +8,10 @@ const corsHeaders = {
 };
 
 const TOKEN_URL = "https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token";
-const FLW_BASE_URL = (() => {
-  const v = Deno.env.get("FLW_BASE_URL") ?? "";
-  return /^https:\/\/[^ ]*flutterwave\.com/i.test(v) ? v : "https://developersandbox-api.flutterwave.com";
-})();
+const FLW_BASE_URL = Deno.env.get("FLW_BASE_URL") ?? "";
+const SANDBOX_KYC_ENABLED =
+  Deno.env.get("SENDA_KYC_SANDBOX_MODE") === "true" &&
+  FLW_BASE_URL === "https://developersandbox-api.flutterwave.com";
 
 function jsonResponse(data: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -172,7 +172,8 @@ Deno.serve(async (req: Request) => {
         kyc_date_of_birth: date_of_birth ?? null,
         kyc_address: address ?? null,
         kyc_submitted_at: new Date().toISOString(),
-        kyc_status: "submitted",
+        kyc_status: SANDBOX_KYC_ENABLED ? "verified" : "submitted",
+        kyc_verified_at: SANDBOX_KYC_ENABLED ? new Date().toISOString() : null,
         flutterwave_sender_id: senderId,
       };
 
@@ -188,8 +189,11 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         success: true,
         sender_id: senderId,
-        kyc_status: "submitted",
-        message: "KYC was submitted. Provider verification is pending confirmation.",
+        kyc_status: SANDBOX_KYC_ENABLED ? "verified" : "submitted",
+        verification_mode: SANDBOX_KYC_ENABLED ? "sandbox" : "provider_pending",
+        message: SANDBOX_KYC_ENABLED
+          ? "Sandbox KYC verification enabled for testing."
+          : "KYC was submitted. Provider verification is pending confirmation.",
       });
     }
 
@@ -213,6 +217,11 @@ Deno.serve(async (req: Request) => {
         kyc_submitted_at: profile.kyc_submitted_at,
         kyc_verified_at: profile.kyc_verified_at,
         has_sender_id: Boolean(profile.flutterwave_sender_id),
+        verification_mode: profile.kyc_status === "submitted"
+          ? "provider_pending"
+          : profile.kyc_status === "verified" && FLW_BASE_URL === "https://developersandbox-api.flutterwave.com"
+          ? "sandbox"
+          : null,
       });
     }
 

@@ -60,7 +60,7 @@ export default function SettingsScreen() {
       color: Colors.success[600],
       bg: Colors.success[50],
       label: 'Verified',
-      desc: 'Your identity has been verified via Flutterwave. You can send money.',
+      desc: 'Your KYC status is verified. You can send money.',
     },
     pending: {
       icon: Clock,

@@ -950,6 +950,7 @@ export async function submitKyc(payload: {
   customer_id?: string;
   sender_id?: string;
   kyc_status?: string;
+  verification_mode?: 'sandbox' | 'provider_pending' | null;
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -984,7 +985,9 @@ export async function fetchKycStatus(): Promise<{
   success: boolean;
   kyc_status?: string;
   kyc_submitted_at?: string;
+  kyc_verified_at?: string;
   has_sender_id?: boolean;
+  verification_mode?: 'sandbox' | 'provider_pending' | null;
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;

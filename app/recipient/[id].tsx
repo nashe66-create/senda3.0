@@ -588,6 +588,15 @@ export default function RecipientDetailScreen() {
               return;
             }
 
+            const corridorCurrency = countries.find(
+              (item) => item.country_code === data.country
+            )?.currency?.trim().toUpperCase();
+            if (data.currency && corridorCurrency && data.currency.toUpperCase() !== corridorCurrency) {
+              setOptionsError(
+                "This recipient's saved currency does not match the selected corridor. Review the destination before saving."
+              );
+            }
+
             await loadCountryOptions(
               data.country,
               requestId
@@ -709,6 +718,20 @@ export default function RecipientDetailScreen() {
     corridorCountries.find(
       (c) => c.country_code === country
     );
+
+  const resolvedCurrency =
+    selectedCorridorCountry?.currency?.trim().toUpperCase() || '';
+
+  const currencyMismatch =
+    Boolean(currency && resolvedCurrency && currency.toUpperCase() !== resolvedCurrency);
+
+  useEffect(() => {
+    if (resolvedCurrency && !currencyMismatch) {
+      setCurrency(resolvedCurrency);
+    }
+    // Currency is derived from the selected corridor country.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedCurrency]);
 
   const payoutMethods: string[] =
     !country
@@ -963,9 +986,7 @@ export default function RecipientDetailScreen() {
         return;
       }
 
-      if (
-        !selectedCorridorCountry?.currency
-      ) {
+      if (!resolvedCurrency) {
         setError(
           'Destination currency is unavailable for this destination. Please try again later.'
         );
@@ -973,19 +994,9 @@ export default function RecipientDetailScreen() {
         return;
       }
 
-      /*
-       * Currency is only required when Flutterwave
-       * actually provides currency choices.
-       *
-       * If there is no currency list, we don't
-       * ask the user to select one.
-       */
-      if (
-        currencies.length > 0 &&
-        !currency
-      ) {
+      if (currencyMismatch) {
         setError(
-          'Please select a currency'
+          'The saved currency is no longer supported for this destination. Please review the recipient country.'
         );
 
         return;
@@ -1060,8 +1071,7 @@ export default function RecipientDetailScreen() {
              * save null/empty rather than inventing one.
              */
             currency:
-              currency ||
-              null,
+              resolvedCurrency,
 
             receiving_method:
               receivingMethod,
@@ -1126,7 +1136,7 @@ export default function RecipientDetailScreen() {
           const flwParams = {
             recipientId: savedRecipient.id,
             receivingMethod,
-            currency: currency || '',
+            currency: resolvedCurrency,
             mobileMoney: receivingMethod === 'mobile_money'
               ? {
                   network: flutterwaveNetworkCode || mobileMoneyProvider,
@@ -1648,6 +1658,13 @@ export default function RecipientDetailScreen() {
           )}
 
           {/* CURRENCY */}
+
+          {country && currencies.length <= 1 && resolvedCurrency && (
+            <View style={styles.derivedCurrencyBox}>
+              <Text style={styles.label}>Currency</Text>
+              <Text style={styles.derivedCurrencyText}>{resolvedCurrency}</Text>
+            </View>
+          )}
 
           {country &&
             currencies.length >
@@ -2328,6 +2345,18 @@ const styles =
     currencyScroll: {
       marginBottom:
         Spacing.md,
+    },
+
+    derivedCurrencyBox: {
+      marginBottom:
+        Spacing.md,
+    },
+
+    derivedCurrencyText: {
+      ...Typography.bodyMedium,
+      color:
+        Colors.neutral[900],
+      marginLeft: 4,
     },
 
     currencyScrollContent: {
