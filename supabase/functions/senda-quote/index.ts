@@ -411,7 +411,12 @@ Deno.serve(async (req: Request) => {
     const payoutFee: number | null = null;
     const sendaFee = 0;
     const sendaFxMargin = 0;
-    const customerPays = Number((sourceAmount + collectionFee).toFixed(2));
+    const customerPays: number | null = payoutFee === null
+      ? null
+      : Number((sourceAmount + collectionFee + payoutFee + sendaFee + sendaFxMargin).toFixed(2));
+    const customerPaysStatus = payoutFee === null
+      ? "incomplete_provider_fee"
+      : "complete";
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60_000);
@@ -431,7 +436,8 @@ Deno.serve(async (req: Request) => {
         quote_created_at: now.toISOString(),
         quote_expires_at: expiresAt.toISOString(),
         quote_locked_at: null,
-        status: "quoted",
+        // An unknown payout fee must not produce a lockable or payable quote.
+        status: customerPaysStatus === "complete" ? "quoted" : "draft",
         total_gbp: sourceAmount,
       })
       .eq("id", payload.plan_id)
@@ -474,6 +480,7 @@ Deno.serve(async (req: Request) => {
       senda_fee: sendaFee,
       senda_fx_margin: sendaFxMargin,
       payout_fee_status: "unknown_at_quote",
+      customer_pays_status: customerPaysStatus,
       // Legacy field retained for clients and the existing plans schema.
       provider_fee: collectionFee,
       quote_created_at: now.toISOString(),
