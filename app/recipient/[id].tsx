@@ -2,6 +2,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
 } from 'react';
 
 import {
@@ -354,6 +355,8 @@ export default function RecipientDetailScreen() {
   ] =
     useState(!isNew);
 
+  const loadRequestRef = useRef(0);
+
   /* =======================================================
      LOAD ALL DESTINATIONS
      ======================================================= */
@@ -402,7 +405,8 @@ export default function RecipientDetailScreen() {
   const loadCountryOptions =
     useCallback(
       async (
-        selectedCountry: string
+        selectedCountry: string,
+        requestId?: number
       ) => {
         if (
           !selectedCountry
@@ -424,6 +428,8 @@ export default function RecipientDetailScreen() {
               selectedCountry
             );
 
+          if (requestId !== undefined && requestId !== loadRequestRef.current) return;
+
           setCorridorNetworks(
             networks
           );
@@ -433,24 +439,12 @@ export default function RecipientDetailScreen() {
               selectedCountry
             );
 
+          if (requestId !== undefined && requestId !== loadRequestRef.current) return;
+
           setCorridorBanks(
             banks
           );
 
-          const countryInfo =
-            corridorCountries.find(
-              (c) =>
-                c.country_code ===
-                selectedCountry
-            );
-
-          if (
-            countryInfo?.currency
-          ) {
-            setCurrency(
-              countryInfo.currency
-            );
-          }
         } catch (e: any) {
           console.error(
             'Failed to load country networks:',
@@ -475,9 +469,7 @@ export default function RecipientDetailScreen() {
           );
         }
       },
-      [
-        corridorCountries,
-      ]
+      []
     );
 
   /* =======================================================
@@ -487,18 +479,16 @@ export default function RecipientDetailScreen() {
   const loadRecipient =
     useCallback(
       async () => {
-        if (
-          isNew ||
-          !id
-        ) {
-          setLoading(
-            false
-          );
-
-          return;
-        }
+        const requestId = ++loadRequestRef.current;
 
         try {
+          if (isNew) {
+            await loadAllOptions();
+            return;
+          }
+
+          if (!id) return;
+
           const data =
             await fetchRecipient(
               id
@@ -582,8 +572,25 @@ export default function RecipientDetailScreen() {
                 null
             );
 
+            const countries =
+              await fetchCorridorCountries();
+
+            if (requestId !== loadRequestRef.current) return;
+
+            setCorridorCountries(
+              countries
+            );
+
+            if (!countries.some((item) => item.country_code === data.country)) {
+              setOptionsError(
+                "This recipient's saved destination is no longer available in the current corridor data. Review the destination before saving."
+              );
+              return;
+            }
+
             await loadCountryOptions(
-              data.country
+              data.country,
+              requestId
             );
           }
         } catch (e) {
@@ -604,6 +611,7 @@ export default function RecipientDetailScreen() {
       [
         id,
         isNew,
+        loadAllOptions,
         loadCountryOptions,
       ]
     );
@@ -635,22 +643,6 @@ export default function RecipientDetailScreen() {
       }
     })();
   }, [id, isNew]);
-
-  /* =======================================================
-     LOAD DESTINATIONS FOR NEW RECIPIENT
-     ======================================================= */
-
-  useEffect(
-    () => {
-      if (isNew) {
-        loadAllOptions();
-      }
-    },
-    [
-      isNew,
-      loadAllOptions,
-    ]
-  );
 
   // Plan-launched: lock the country/currency to the plan corridor once corridor data has loaded
   useEffect(() => {
@@ -1477,6 +1469,12 @@ export default function RecipientDetailScreen() {
             </Text>
           )}
 
+          {!isNew && optionsError && countries.length > 0 && (
+            <Text style={styles.mutedText}>
+              {optionsError}
+            </Text>
+          )}
+
           {optionsLoading &&
             countries.length ===
               0 && (
@@ -1502,7 +1500,7 @@ export default function RecipientDetailScreen() {
                     styles.emptyOptionsText
                   }
                 >
-                  No payout destinations are currently available.
+                  {optionsError ?? 'No payout destinations are currently available.'}
                 </Text>
               </View>
             )}
