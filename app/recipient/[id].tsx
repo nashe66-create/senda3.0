@@ -2,6 +2,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
 } from 'react';
 
 import {
@@ -354,6 +355,8 @@ export default function RecipientDetailScreen() {
   ] =
     useState(!isNew);
 
+  const loadRequestRef = useRef(0);
+
   /* =======================================================
      LOAD ALL DESTINATIONS
      ======================================================= */
@@ -402,7 +405,8 @@ export default function RecipientDetailScreen() {
   const loadCountryOptions =
     useCallback(
       async (
-        selectedCountry: string
+        selectedCountry: string,
+        requestId?: number
       ) => {
         if (
           !selectedCountry
@@ -424,6 +428,8 @@ export default function RecipientDetailScreen() {
               selectedCountry
             );
 
+          if (requestId !== undefined && requestId !== loadRequestRef.current) return;
+
           setCorridorNetworks(
             networks
           );
@@ -433,24 +439,12 @@ export default function RecipientDetailScreen() {
               selectedCountry
             );
 
+          if (requestId !== undefined && requestId !== loadRequestRef.current) return;
+
           setCorridorBanks(
             banks
           );
 
-          const countryInfo =
-            corridorCountries.find(
-              (c) =>
-                c.country_code ===
-                selectedCountry
-            );
-
-          if (
-            countryInfo?.currency
-          ) {
-            setCurrency(
-              countryInfo.currency
-            );
-          }
         } catch (e: any) {
           console.error(
             'Failed to load country networks:',
@@ -475,9 +469,7 @@ export default function RecipientDetailScreen() {
           );
         }
       },
-      [
-        corridorCountries,
-      ]
+      []
     );
 
   /* =======================================================
@@ -487,18 +479,16 @@ export default function RecipientDetailScreen() {
   const loadRecipient =
     useCallback(
       async () => {
-        if (
-          isNew ||
-          !id
-        ) {
-          setLoading(
-            false
-          );
-
-          return;
-        }
+        const requestId = ++loadRequestRef.current;
 
         try {
+          if (isNew) {
+            await loadAllOptions();
+            return;
+          }
+
+          if (!id) return;
+
           const data =
             await fetchRecipient(
               id
@@ -582,8 +572,34 @@ export default function RecipientDetailScreen() {
                 null
             );
 
+            const countries =
+              await fetchCorridorCountries();
+
+            if (requestId !== loadRequestRef.current) return;
+
+            setCorridorCountries(
+              countries
+            );
+
+            if (!countries.some((item) => item.country_code === data.country)) {
+              setOptionsError(
+                "This recipient's saved destination is no longer available in the current corridor data. Review the destination before saving."
+              );
+              return;
+            }
+
+            const corridorCurrency = countries.find(
+              (item) => item.country_code === data.country
+            )?.currency?.trim().toUpperCase();
+            if (data.currency && corridorCurrency && data.currency.toUpperCase() !== corridorCurrency) {
+              setOptionsError(
+                "This recipient's saved currency does not match the selected corridor. Review the destination before saving."
+              );
+            }
+
             await loadCountryOptions(
-              data.country
+              data.country,
+              requestId
             );
           }
         } catch (e) {
@@ -604,6 +620,7 @@ export default function RecipientDetailScreen() {
       [
         id,
         isNew,
+        loadAllOptions,
         loadCountryOptions,
       ]
     );
@@ -635,22 +652,6 @@ export default function RecipientDetailScreen() {
       }
     })();
   }, [id, isNew]);
-
-  /* =======================================================
-     LOAD DESTINATIONS FOR NEW RECIPIENT
-     ======================================================= */
-
-  useEffect(
-    () => {
-      if (isNew) {
-        loadAllOptions();
-      }
-    },
-    [
-      isNew,
-      loadAllOptions,
-    ]
-  );
 
   // Plan-launched: lock the country/currency to the plan corridor once corridor data has loaded
   useEffect(() => {
@@ -717,6 +718,20 @@ export default function RecipientDetailScreen() {
     corridorCountries.find(
       (c) => c.country_code === country
     );
+
+  const resolvedCurrency =
+    selectedCorridorCountry?.currency?.trim().toUpperCase() || '';
+
+  const currencyMismatch =
+    Boolean(currency && resolvedCurrency && currency.toUpperCase() !== resolvedCurrency);
+
+  useEffect(() => {
+    if (resolvedCurrency && !currencyMismatch) {
+      setCurrency(resolvedCurrency);
+    }
+    // Currency is derived from the selected corridor country.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedCurrency]);
 
   const payoutMethods: string[] =
     !country
@@ -971,9 +986,7 @@ export default function RecipientDetailScreen() {
         return;
       }
 
-      if (
-        !selectedCorridorCountry?.currency
-      ) {
+      if (!resolvedCurrency) {
         setError(
           'Destination currency is unavailable for this destination. Please try again later.'
         );
@@ -981,19 +994,9 @@ export default function RecipientDetailScreen() {
         return;
       }
 
-      /*
-       * Currency is only required when Flutterwave
-       * actually provides currency choices.
-       *
-       * If there is no currency list, we don't
-       * ask the user to select one.
-       */
-      if (
-        currencies.length > 0 &&
-        !currency
-      ) {
+      if (currencyMismatch) {
         setError(
-          'Please select a currency'
+          'The saved currency is no longer supported for this destination. Please review the recipient country.'
         );
 
         return;
@@ -1068,8 +1071,7 @@ export default function RecipientDetailScreen() {
              * save null/empty rather than inventing one.
              */
             currency:
-              currency ||
-              null,
+              resolvedCurrency,
 
             receiving_method:
               receivingMethod,
@@ -1134,7 +1136,7 @@ export default function RecipientDetailScreen() {
           const flwParams = {
             recipientId: savedRecipient.id,
             receivingMethod,
-            currency: currency || '',
+            currency: resolvedCurrency,
             mobileMoney: receivingMethod === 'mobile_money'
               ? {
                   network: flutterwaveNetworkCode || mobileMoneyProvider,
@@ -1477,6 +1479,12 @@ export default function RecipientDetailScreen() {
             </Text>
           )}
 
+          {!isNew && optionsError && countries.length > 0 && (
+            <Text style={styles.mutedText}>
+              {optionsError}
+            </Text>
+          )}
+
           {optionsLoading &&
             countries.length ===
               0 && (
@@ -1502,7 +1510,7 @@ export default function RecipientDetailScreen() {
                     styles.emptyOptionsText
                   }
                 >
-                  No payout destinations are currently available.
+                  {optionsError ?? 'No payout destinations are currently available.'}
                 </Text>
               </View>
             )}
@@ -1650,6 +1658,13 @@ export default function RecipientDetailScreen() {
           )}
 
           {/* CURRENCY */}
+
+          {country && currencies.length <= 1 && resolvedCurrency && (
+            <View style={styles.derivedCurrencyBox}>
+              <Text style={styles.label}>Currency</Text>
+              <Text style={styles.derivedCurrencyText}>{resolvedCurrency}</Text>
+            </View>
+          )}
 
           {country &&
             currencies.length >
@@ -2330,6 +2345,18 @@ const styles =
     currencyScroll: {
       marginBottom:
         Spacing.md,
+    },
+
+    derivedCurrencyBox: {
+      marginBottom:
+        Spacing.md,
+    },
+
+    derivedCurrencyText: {
+      ...Typography.bodyMedium,
+      color:
+        Colors.neutral[900],
+      marginLeft: 4,
     },
 
     currencyScrollContent: {

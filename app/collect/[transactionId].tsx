@@ -248,7 +248,7 @@ export default function CollectScreen() {
             <CheckCircle2 color={Colors.success[500]} size={64} strokeWidth={1.5} />
             <Text style={styles.resultTitle}>Payment Successful</Text>
             <Text style={styles.resultDesc}>Your card has been charged successfully. You can now send transfers.</Text>
-            <Button onPress={() => router.replace('/(tabs)/')} style={styles.actionBtn}>
+            <Button onPress={() => router.replace('/(tabs)')} style={styles.actionBtn}>
               <Text style={styles.btnText}>Done</Text>
             </Button>
           </View>

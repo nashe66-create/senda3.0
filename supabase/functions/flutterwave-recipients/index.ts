@@ -43,11 +43,26 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-// Flutterwave's recipient "type" is a fixed literal ("mobile_money" | "bank"), never currency-suffixed.
-function getRecipientType(receivingMethod: string): string {
-  if (receivingMethod === "mobile_money") return "mobile_money";
-  if (receivingMethod === "bank_account") return "bank";
-  return receivingMethod;
+// Keep this resolver aligned with the corridor sync's explicit country/currency
+// capability lists. Never derive a provider type from arbitrary input.
+const MOBILE_MONEY_CURRENCIES = new Set([
+  "XAF", "XOF", "EGP", "ETB", "GHS", "KES", "MWK", "RWF", "TZS", "UGX", "ZMW",
+]);
+const BANK_CURRENCIES = new Set([
+  "XAF", "XOF", "EGP", "ETB", "GHS", "INR", "KES", "MWK", "NGN", "RWF", "SLL",
+  "TZS", "UGX", "USD", "ZAR", "ZMW",
+]);
+
+function getRecipientType(receivingMethod: string, currency: string): string | null {
+  const normalizedCurrency = currency.trim().toUpperCase();
+
+  if (receivingMethod === "mobile_money" && MOBILE_MONEY_CURRENCIES.has(normalizedCurrency)) {
+    return `mobile_money_${normalizedCurrency.toLowerCase()}`;
+  }
+  if (receivingMethod === "bank_account" && BANK_CURRENCIES.has(normalizedCurrency)) {
+    return `bank_${normalizedCurrency.toLowerCase()}`;
+  }
+  return null;
 }
 
 function buildRecipientBody(
@@ -215,7 +230,13 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Recipient not found" }, 404);
       }
 
-      const recipientType = getRecipientType(payload.receiving_method);
+      const recipientType = getRecipientType(payload.receiving_method, payload.currency);
+      if (!recipientType) {
+        return jsonResponse({
+          success: false,
+          error: "The selected receiving method is not available for this currency.",
+        }, 400);
+      }
       const recipientBody = buildRecipientBody(
         payload.receiving_method, payload.currency, payload.mobile_money, payload.bank_account, recipientType, recipientRow.name,
       );
@@ -345,7 +366,13 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Recipient not found" }, 404);
       }
 
-      const recipientType = getRecipientType(payload.receiving_method);
+      const recipientType = getRecipientType(payload.receiving_method, payload.currency);
+      if (!recipientType) {
+        return jsonResponse({
+          success: false,
+          error: "The selected receiving method is not available for this currency.",
+        }, 400);
+      }
       const recipientBody = buildRecipientBody(
         payload.receiving_method, payload.currency, payload.mobile_money, payload.bank_account, recipientType, recipientRow.name,
       );
