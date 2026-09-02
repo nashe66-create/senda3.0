@@ -78,6 +78,40 @@ async function fetchFxRate(accessToken: string, sourceCurrency: string, destinat
   return { rate, destinationAmount };
 }
 
+async function fetchCollectionFee(accessToken: string, amountGbp: number): Promise<number> {
+  const response = await fetch(`${FLW_BASE_URL}/fees`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Trace-Id": crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      amount: amountGbp,
+      currency: "GBP",
+      country: "GB",
+      payment_method: "card",
+    }),
+  });
+
+  const text = await response.text();
+  let data: any = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
+
+  if (!response.ok) {
+    throw new Error(data?.message ?? "Failed to fetch Flutterwave collection fee");
+  }
+
+  const root = data?.data ?? data;
+  const fee = Number(root?.fee ?? root?.amount?.fee ?? root?.total_fee ?? NaN);
+  if (!Number.isFinite(fee) || fee < 0) {
+    throw new Error("Flutterwave collection fee was not returned");
+  }
+
+  return Number(fee.toFixed(2));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -361,10 +395,23 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Calculate fee (for now, estimate as 0 — Flutterwave fees are typically deducted from the destination amount
-    // or charged separately. We capture the actual fee from the charge response later.)
-    const providerFee = 0;
-    const customerPays = Number(totalSourceAmount.toFixed(2)) + Number(providerFee.toFixed(2));
+    const sourceAmount = Number(totalSourceAmount.toFixed(2));
+    let collectionFee: number;
+    try {
+      collectionFee = await fetchCollectionFee(accessToken, sourceAmount);
+    } catch (error) {
+      console.error("Failed to fetch Flutterwave collection fee:", error);
+      return jsonResponse({
+        success: false,
+        error: "Unable to obtain the Flutterwave collection fee for this quote.",
+        error_code: "COLLECTION_FEE_UNAVAILABLE",
+      }, 502);
+    }
+
+    const payoutFee: number | null = null;
+    const sendaFee = 0;
+    const sendaFxMargin = 0;
+    const customerPays = Number((sourceAmount + collectionFee).toFixed(2));
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60_000);
@@ -373,18 +420,19 @@ Deno.serve(async (req: Request) => {
     const { error: updateError } = await supabase
       .from("plans")
       .update({
-        source_amount: Number(totalSourceAmount.toFixed(2)),
+        source_amount: sourceAmount,
         destination_amount: Number(totalDestinationAmount.toFixed(2)),
         customer_pays: customerPays,
         customer_fx_rate: fxRate,
         provider_fx_rate: fxRate,
-        provider_fee: providerFee,
-        senda_fx_margin: 0,
+        // Legacy schema column retained as the known collection fee.
+        provider_fee: collectionFee,
+        senda_fx_margin: sendaFxMargin,
         quote_created_at: now.toISOString(),
         quote_expires_at: expiresAt.toISOString(),
         quote_locked_at: null,
         status: "quoted",
-        total_gbp: Number(totalSourceAmount.toFixed(2)),
+        total_gbp: sourceAmount,
       })
       .eq("id", payload.plan_id)
       .eq("user_id", userId);
@@ -415,13 +463,19 @@ Deno.serve(async (req: Request) => {
       source_currency: "GBP",
       destination_country: planDestinationCountry,
       destination_currency: planDestinationCurrency,
-      source_amount: Number(totalSourceAmount.toFixed(2)),
+      source_amount: sourceAmount,
       destination_amount: Number(totalDestinationAmount.toFixed(2)),
       customer_pays: customerPays,
       customer_fx_rate: fxRate,
       provider_fx_rate: fxRate,
-      provider_fee: providerFee,
-      senda_fx_margin: 0,
+      flutterwave_collection_fee: collectionFee,
+      flutterwave_payout_fee: payoutFee,
+      flutterwave_fx_rate: fxRate,
+      senda_fee: sendaFee,
+      senda_fx_margin: sendaFxMargin,
+      payout_fee_status: "unknown_at_quote",
+      // Legacy field retained for clients and the existing plans schema.
+      provider_fee: collectionFee,
       quote_created_at: now.toISOString(),
       quote_expires_at: expiresAt.toISOString(),
       recipients: recipientBreakdown,
