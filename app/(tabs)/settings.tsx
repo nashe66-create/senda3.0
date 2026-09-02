@@ -59,36 +59,36 @@ export default function SettingsScreen() {
       icon: CheckCircle2,
       color: Colors.success[600],
       bg: Colors.success[50],
-      label: 'Verified',
-      desc: 'Your KYC status is verified. You can send money.',
+      label: 'Account Ready',
+      desc: 'Your account is set up. You can send money now.',
     },
     pending: {
       icon: Clock,
       color: Colors.warning[600],
       bg: Colors.warning[50],
-      label: 'Pending Review',
-      desc: 'Your KYC verification is being reviewed. This usually takes 1-2 business days.',
+      label: 'Setup In Progress',
+      desc: 'Your account is being set up. This usually takes a few moments.',
     },
     submitted: {
       icon: Clock,
       color: Colors.warning[600],
       bg: Colors.warning[50],
-      label: 'Submitted',
-      desc: 'Your KYC has been submitted and is being reviewed. This usually takes 1-2 business days.',
+      label: 'Account Setup Complete',
+      desc: 'Your account details have been saved. You can start sending money.',
     },
     rejected: {
       icon: AlertCircle,
       color: Colors.error[600],
       bg: Colors.error[50],
-      label: 'Verification Rejected',
-      desc: 'Your KYC was rejected. Contact support before submitting another application.',
+      label: 'Setup Failed',
+      desc: 'There was an issue setting up your account. Please try again or contact support.',
     },
     unverified: {
       icon: Shield,
       color: Colors.neutral[600],
       bg: Colors.neutral[200],
-      label: 'Not Verified',
-      desc: 'Complete KYC verification to start sending money. Powered by Flutterwave.',
+      label: 'Complete Account Setup',
+      desc: 'Finish setting up your account to start sending money.',
     },
   };
 
@@ -144,7 +144,7 @@ export default function SettingsScreen() {
           <KycIcon color={kycEntry.color} size={24} strokeWidth={2} />
         </View>
         <View style={styles.kycInfo}>
-          <Text style={styles.kycLabel}>Identity Verification</Text>
+          <Text style={styles.kycLabel}>Account Setup</Text>
           <View style={styles.kycStatusRow}>
             <View
               style={[
@@ -169,7 +169,7 @@ export default function SettingsScreen() {
         >
           <Shield color="#fff" size={18} strokeWidth={2} />
           <Text style={styles.kycBtnText}>
-            Start KYC Verification
+            Complete Account Setup
           </Text>
         </TouchableOpacity>
       )}

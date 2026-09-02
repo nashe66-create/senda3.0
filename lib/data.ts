@@ -940,18 +940,23 @@ export function getRecurringLabel(
 
 export async function submitKyc(payload: {
   name: { first: string; middle?: string; last: string };
-  email: string;
   phone: { country_code: string; number: string };
   address: { line1: string; line2?: string; city: string; state?: string; postal_code: string; country: string };
   date_of_birth: string;
-  national_identification: { type: string; identifier: string; expiration_date?: string };
+  country_of_residence: string;
 }): Promise<{
   success: boolean;
-  customer_id?: string;
   sender_id?: string;
   kyc_status?: string;
   verification_mode?: 'sandbox' | 'provider_pending' | null;
   error?: string;
+  _flutterwave_response?: {
+    status?: number;
+    error?: any;
+    message?: string;
+    validation_errors?: any;
+    errors?: any;
+  };
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -975,7 +980,8 @@ export async function submitKyc(payload: {
   if (!response.ok || !data.success) {
     return {
       success: false,
-      error: data?.error ?? 'KYC submission failed',
+      error: typeof data?.error === 'string' ? data.error : 'KYC submission failed',
+      _flutterwave_response: data?._flutterwave_response,
     };
   }
   return data;

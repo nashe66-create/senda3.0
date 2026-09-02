@@ -871,9 +871,9 @@ export default function PlanDetailScreen() {
           <TouchableOpacity onPress={() => router.push('/kyc')} style={styles.kycBanner}>
             <ShieldAlert color={Colors.warning[600]} size={20} strokeWidth={2} />
             <View style={styles.kycBannerText}>
-              <Text style={styles.kycBannerTitle}>Identity verification required</Text>
+              <Text style={styles.kycBannerTitle}>Complete account setup</Text>
               <Text style={styles.kycBannerSubtext}>
-                Complete your KYC in Settings to enable transfers
+                Finish setting up your account to enable transfers
               </Text>
             </View>
             <ChevronRight color={Colors.warning[600]} size={18} strokeWidth={2} />
