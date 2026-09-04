@@ -328,10 +328,7 @@ Deno.serve(async (req: Request) => {
 
       return jsonResponse({
         success: true,
-        recipient_id: flwRecipientId,
-        recipient_type: flwRecipientType,
         account_name: accountName,
-        flutterwave_response: data,
       });
     }
 
@@ -464,10 +461,7 @@ Deno.serve(async (req: Request) => {
 
       return jsonResponse({
         success: true,
-        recipient_id: flwRecipientId,
-        recipient_type: flwRecipientType,
         account_name: accountName,
-        flutterwave_response: data,
       });
     }
 

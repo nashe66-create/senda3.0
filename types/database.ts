@@ -110,6 +110,9 @@ export interface Plan {
   customer_fx_rate: number;
   provider_fx_rate: number;
   provider_fee: number;
+  senda_fee: number;
+  processing_fee: number;
+  actual_collection_cost: number | null;
   senda_fx_margin: number;
   quote_created_at: string | null;
   quote_expires_at: string | null;
@@ -156,6 +159,21 @@ export interface Transaction {
   completed_at: string | null;
 
   plan?: Plan | null;
+}
+
+export interface TransferAttempt {
+  id: string;
+  commitment_id: string;
+  attempt_number: number;
+  provider: 'flutterwave';
+  provider_reference: string;
+  idempotency_key: string;
+  provider_transfer_id: string | null;
+  provider_status: string | null;
+  status: string;
+  actual_provider_payout_cost: number | null;
+  actual_provider_payout_cost_currency: string | null;
+  provider_cost_observed_at: string | null;
 }
 
 export interface PlanWithCommitments extends Plan {
@@ -207,6 +225,8 @@ export interface QuoteResult {
   customer_fx_rate: number;
   provider_fx_rate: number;
   provider_fee: number;
+  senda_fee: number;
+  processing_fee: number;
   senda_fx_margin: number;
   quote_created_at: string;
   quote_expires_at: string;

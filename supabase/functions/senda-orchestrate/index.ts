@@ -246,6 +246,12 @@ async function releaseAttemptBackedPayouts(supabase: any, serviceClient: any, ac
   if (!plan || plan.status !== "funded" || plan.payment_status !== "successful" || !plan.quote_locked_at) {
     return jsonResponse({ success: false, error: "Payouts can only be released for a funded order with a locked quote" }, 400);
   }
+  const { data: transaction } = await serviceClient.from("transactions")
+    .select("id").eq("plan_id", planId).eq("status", "successful")
+    .not("completed_at", "is", null).maybeSingle();
+  if (!transaction) {
+    return jsonResponse({ success: false, error: "Payouts require a successful verified customer collection" }, 400);
+  }
   const { data: commitments } = await serviceClient.from("commitments")
     .select("id, payout_method, recipient_snapshot").eq("plan_id", planId).in("status", ["ready", "pending"]);
   if (!commitments?.length) return jsonResponse({ success: false, error: "No ready payouts to release" }, 400);
@@ -921,6 +927,9 @@ Deno.serve(async (req: Request) => {
         .eq("user_id", userId)
         .maybeSingle();
       if (!retryCommitment) return jsonResponse({ success: false, error: "Commitment not found" }, 404);
+      if (payload.payout_method !== retryCommitment.payout_method) {
+        return jsonResponse({ success: false, error: "A payout retry must use the recipient's verified payout method" }, 400);
+      }
       const retryResult = await createAttemptTransfer(
         supabase, serviceClient, await getAccessToken(), userId,
         payload.commitment_id, payload.payout_method, true,

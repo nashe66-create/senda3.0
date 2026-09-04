@@ -1399,7 +1399,7 @@ export async function createFlutterwaveRecipient(params: {
   currency: string;
   mobileMoney?: { network: string; msisdn: string; country: string };
   bankAccount?: { account_number: string; bank_code: string; country: string };
-}): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
+}): Promise<{ success: boolean; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
@@ -1430,12 +1430,11 @@ export async function createFlutterwaveRecipient(params: {
 
   const result = await response.json();
   if (!response.ok || !result.success) {
-    return { success: false, recipientId: null, accountName: null, error: result.error ?? 'Failed to create Flutterwave recipient' };
+    return { success: false, accountName: null, error: result.error ?? 'Failed to create recipient' };
   }
 
   return {
     success: true,
-    recipientId: result.recipient_id,
     accountName: result.account_name,
   };
 }
@@ -1446,7 +1445,7 @@ export async function updateFlutterwaveRecipient(params: {
   currency: string;
   mobileMoney?: { network: string; msisdn: string; country: string };
   bankAccount?: { account_number: string; bank_code: string; country: string };
-}): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
+}): Promise<{ success: boolean; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
@@ -1477,12 +1476,11 @@ export async function updateFlutterwaveRecipient(params: {
 
   const result = await response.json();
   if (!response.ok || !result.success) {
-    return { success: false, recipientId: null, accountName: null, error: result.error ?? 'Failed to update Flutterwave recipient' };
+    return { success: false, accountName: null, error: result.error ?? 'Failed to update recipient' };
   }
 
   return {
     success: true,
-    recipientId: result.recipient_id,
     accountName: result.account_name,
   };
 }
@@ -1549,6 +1547,8 @@ export async function createQuote(params: {
       customer_fx_rate: 0,
       provider_fx_rate: 0,
       provider_fee: 0,
+      senda_fee: 0,
+      processing_fee: 0,
       senda_fx_margin: 0,
       quote_created_at: '',
       quote_expires_at: '',

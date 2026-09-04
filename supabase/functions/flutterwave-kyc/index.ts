@@ -303,7 +303,6 @@ Deno.serve(async (req: Request) => {
 
       return jsonResponse({
         success: true,
-        sender_id: senderId,
         kyc_status: SANDBOX_KYC_ENABLED ? "verified" : "submitted",
         verification_mode: SANDBOX_KYC_ENABLED ? "sandbox" : "provider_pending",
         message: SANDBOX_KYC_ENABLED

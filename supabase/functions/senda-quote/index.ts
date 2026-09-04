@@ -112,6 +112,19 @@ async function fetchCollectionFee(accessToken: string, amountGbp: number): Promi
   return Number(fee.toFixed(2));
 }
 
+function toMinorUnits(amount: number): number {
+  return Math.round(Number(amount.toFixed(2)) * 100);
+}
+
+function fromMinorUnits(amount: number): number {
+  return Number((amount / 100).toFixed(2));
+}
+
+function calculateSendaFee(sourceAmount: number): number {
+  const sourceMinorUnits = toMinorUnits(sourceAmount);
+  return fromMinorUnits(Math.max(Math.round(sourceMinorUnits / 200), 50));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -408,15 +421,14 @@ Deno.serve(async (req: Request) => {
       }, 502);
     }
 
-    const payoutFee: number | null = null;
-    const sendaFee = 0;
+    const sendaFee = calculateSendaFee(sourceAmount);
     const sendaFxMargin = 0;
-    const customerPays: number | null = payoutFee === null
-      ? null
-      : Number((sourceAmount + collectionFee + payoutFee + sendaFee + sendaFxMargin).toFixed(2));
-    const customerPaysStatus = payoutFee === null
-      ? "incomplete_provider_fee"
-      : "complete";
+    const processingFee = fromMinorUnits(
+      toMinorUnits(collectionFee) + toMinorUnits(sendaFee),
+    );
+    const customerPays = fromMinorUnits(
+      toMinorUnits(sourceAmount) + toMinorUnits(processingFee),
+    );
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 60_000);
@@ -430,14 +442,14 @@ Deno.serve(async (req: Request) => {
         customer_pays: customerPays,
         customer_fx_rate: fxRate,
         provider_fx_rate: fxRate,
-        // Legacy schema column retained as the known collection fee.
         provider_fee: collectionFee,
+        senda_fee: sendaFee,
+        processing_fee: processingFee,
         senda_fx_margin: sendaFxMargin,
         quote_created_at: now.toISOString(),
         quote_expires_at: expiresAt.toISOString(),
         quote_locked_at: null,
-        // An unknown payout fee must not produce a lockable or payable quote.
-        status: customerPaysStatus === "complete" ? "quoted" : "draft",
+        status: "quoted",
         total_gbp: sourceAmount,
       })
       .eq("id", payload.plan_id)
@@ -474,15 +486,9 @@ Deno.serve(async (req: Request) => {
       customer_pays: customerPays,
       customer_fx_rate: fxRate,
       provider_fx_rate: fxRate,
-      flutterwave_collection_fee: collectionFee,
-      flutterwave_payout_fee: payoutFee,
-      flutterwave_fx_rate: fxRate,
       senda_fee: sendaFee,
+      processing_fee: processingFee,
       senda_fx_margin: sendaFxMargin,
-      payout_fee_status: "unknown_at_quote",
-      customer_pays_status: customerPaysStatus,
-      // Legacy field retained for clients and the existing plans schema.
-      provider_fee: collectionFee,
       quote_created_at: now.toISOString(),
       quote_expires_at: expiresAt.toISOString(),
       recipients: recipientBreakdown,

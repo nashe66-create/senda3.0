@@ -44,7 +44,6 @@ import {
   addCommitment,
   deleteCommitment,
   deletePlan,
-  updatePlan,
   recalcPlanTotals,
   createTransaction,
   formatGBP,
@@ -58,7 +57,6 @@ import {
   confirmPayouts,
   retryPayout,
   cancelOrder,
-  fetchSupportedPayoutMethods,
 } from '@/lib/data';
 import {
   PlanWithCommitments,
@@ -113,8 +111,6 @@ export default function PlanDetailScreen() {
     errors?: string[];
   } | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const [showRetryModal, setShowRetryModal] = useState(false);
-  const [supportedMethods, setSupportedMethods] = useState<PayoutMethod[]>([]);
 
   // Cancelling
   const [cancelling, setCancelling] = useState(false);
@@ -199,6 +195,11 @@ export default function PlanDetailScreen() {
   // =======================================================
 
   const handleAddCommitment = async () => {
+    if (plan && plan.commitments.length >= 5) {
+      setCommitmentError('A remittance order can contain a maximum of 5 recipients');
+      return;
+    }
+
     if (!selectedRecipientId) {
       setCommitmentError('Please select a recipient');
       return;
@@ -441,7 +442,6 @@ export default function PlanDetailScreen() {
       if (!result.success) {
         Alert.alert('Retry Failed', result.error || 'Could not retry this payout');
       } else {
-        setShowRetryModal(false);
         await loadPlan();
       }
     } catch (e: any) {
@@ -449,15 +449,6 @@ export default function PlanDetailScreen() {
     } finally {
       setRetryingId(null);
     }
-  };
-
-  const openRetryModal = async (commitmentId: string) => {
-    setRetryingId(commitmentId);
-    setShowRetryModal(true);
-    const destCountry = plan?.destination_country || '';
-    const methods = await fetchSupportedPayoutMethods(destCountry);
-    setSupportedMethods(methods);
-    setRetryingId(null);
   };
 
   // =======================================================
@@ -505,36 +496,6 @@ export default function PlanDetailScreen() {
           onPress: async () => {
             await deletePlan(id);
             router.push('/(tabs)/plans');
-          },
-        },
-      ]
-    );
-  };
-
-  const handleReopenPlan = () => {
-    Alert.alert(
-      'Reopen Plan',
-      'This will reset the plan to draft so you can edit recipients and get a new quote.',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Reopen',
-          onPress: async () => {
-            try {
-              await updatePlan(id, {
-                status: 'draft',
-                quote_created_at: null,
-                quote_expires_at: null,
-                quote_locked_at: null,
-                customer_pays: 0,
-                customer_fx_rate: 0,
-                provider_fee: 0,
-                payment_status: 'pending',
-              });
-              await loadPlan();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Could not reopen plan');
-            }
           },
         },
       ]
@@ -680,7 +641,7 @@ export default function PlanDetailScreen() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recipients in this plan</Text>
-          {canEdit && (
+          {canEdit && plan.commitments.length < 5 && (
             <TouchableOpacity
               onPress={() => setShowAddCommitment(true)}
               style={styles.addBtn}
@@ -696,7 +657,7 @@ export default function PlanDetailScreen() {
             <Text style={styles.emptyCommitText}>
               No recipients added yet. Add recipients to this plan to start bundling transfers.
             </Text>
-            {canEdit && (
+            {canEdit && plan.commitments.length < 5 && (
               <Button
                 onPress={() => setShowAddCommitment(true)}
                 variant="outline"
@@ -836,11 +797,15 @@ export default function PlanDetailScreen() {
 
                 {isFailed && (plan.status === 'partially_failed' || plan.status === 'failed') && (
                   <TouchableOpacity
-                    onPress={() => openRetryModal(commitment.id)}
+                    onPress={() => {
+                      if (commitment.payout_method) {
+                        handleRetryPayout(commitment.id, commitment.payout_method);
+                      }
+                    }}
                     style={styles.retryBtn}
                   >
                     <RefreshCw color={Colors.primary[600]} size={14} strokeWidth={2} />
-                    <Text style={styles.retryBtnText}>Try another payout method</Text>
+                    <Text style={styles.retryBtnText}>Retry payout</Text>
                   </TouchableOpacity>
                 )}
               </Card>
@@ -933,7 +898,7 @@ export default function PlanDetailScreen() {
           <View style={styles.partialFailBox}>
             <Text style={styles.partialFailTitle}>Some payouts could not be completed</Text>
             <Text style={styles.partialFailText}>
-              You can retry failed payouts using a different method, or contact Senda support for a refund.
+              You can retry failed payouts, or contact Senda support for a refund.
             </Text>
           </View>
         )}
@@ -947,12 +912,6 @@ export default function PlanDetailScreen() {
             <XCircle color={Colors.error[500]} size={16} strokeWidth={2} />
             <Text style={styles.deletePlanText}>{cancelling ? 'Cancelling...' : 'Cancel Order'}</Text>
           </TouchableOpacity>
-        )}
-
-        {plan.status === 'cancelled' && (
-          <Button onPress={handleReopenPlan} variant="outline" style={styles.confirmBtn}>
-            Reopen Plan
-          </Button>
         )}
 
         {canEdit && (
@@ -1055,8 +1014,8 @@ export default function PlanDetailScreen() {
                   </View>
 
                   <View style={styles.quoteRow}>
-                    <Text style={styles.quoteLabel}>You pay</Text>
-                    <Text style={styles.quoteValue}>{formatGBP(Number(quote.customer_pays))}</Text>
+                    <Text style={styles.quoteLabel}>Amount being sent</Text>
+                    <Text style={styles.quoteValue}>{formatGBP(Number(quote.source_amount))}</Text>
                   </View>
                   <View style={styles.quoteRow}>
                     <Text style={styles.quoteLabel}>Exchange rate</Text>
@@ -1065,8 +1024,12 @@ export default function PlanDetailScreen() {
                     </Text>
                   </View>
                   <View style={styles.quoteRow}>
-                    <Text style={styles.quoteLabel}>Fee</Text>
-                    <Text style={styles.quoteValueSmall}>{formatGBP(Number(quote.provider_fee))}</Text>
+                    <Text style={styles.quoteLabel}>Processing Fee</Text>
+                    <Text style={styles.quoteValueSmall}>{formatGBP(Number(quote.processing_fee))}</Text>
+                  </View>
+                  <View style={styles.quoteRow}>
+                    <Text style={styles.quoteLabel}>Total paid</Text>
+                    <Text style={styles.quoteValue}>{formatGBP(Number(quote.customer_pays))}</Text>
                   </View>
 
                   <View style={styles.quoteDivider} />
@@ -1272,60 +1235,6 @@ export default function PlanDetailScreen() {
         </View>
       </Modal>
 
-      {/* RETRY PAYOUT MODAL */}
-      <Modal
-        visible={showRetryModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowRetryModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Try Another Payout Method</Text>
-              <TouchableOpacity onPress={() => setShowRetryModal(false)}>
-                <Text style={styles.modalCloseText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalScroll}>
-              <Text style={styles.modalLabel}>
-                Select a different payout method for this recipient. Only methods supported for this corridor are shown.
-              </Text>
-
-              {supportedMethods.length === 0 && (
-                <Text style={styles.commitmentErrorText}>
-                  No alternative payout methods are supported for this corridor. Please contact Senda support for a refund.
-                </Text>
-              )}
-
-              {supportedMethods.map((method) => {
-                const Icon = method === 'bank' ? Building2 : method === 'mobile_money' ? Smartphone : Wallet;
-                return (
-                  <TouchableOpacity
-                    key={method}
-                    onPress={() => retryingId && handleRetryPayout(retryingId, method)}
-                    style={styles.retryMethodItem}
-                    disabled={!!retryingId}
-                  >
-                    <Icon color={Colors.primary[600]} size={20} strokeWidth={2} />
-                    <Text style={styles.retryMethodName}>
-                      {method === 'bank' ? 'Bank Account' : method === 'mobile_money' ? 'Mobile Money' : 'Cash Pickup'}
-                    </Text>
-                    <ChevronRight color={Colors.neutral[400]} size={16} strokeWidth={2} />
-                  </TouchableOpacity>
-                );
-              })}
-
-              <View style={styles.contactSupportBox}>
-                <Text style={styles.contactSupportText}>
-                  For unresolved cases, contact Senda support for a refund.
-                </Text>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }

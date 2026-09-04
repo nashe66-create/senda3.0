@@ -214,13 +214,7 @@ Deno.serve(async (req: Request) => {
       payload: event,
     });
     if (dedupError) {
-      if (dedupError.code === "23505") {
-        return new Response(JSON.stringify({ received: true, duplicate: true }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      throw dedupError;
+      if (dedupError.code !== "23505") throw dedupError;
     }
 
     const accessToken = await getAccessToken();

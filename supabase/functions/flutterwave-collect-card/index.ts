@@ -46,14 +46,14 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-async function flutterwaveRequest(accessToken: string, method: string, path: string, body?: unknown) {
+async function flutterwaveRequest(accessToken: string, method: string, path: string, body?: unknown, idempotencyKey?: string) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/json",
     "Content-Type": "application/json",
     "X-Trace-Id": crypto.randomUUID(),
   };
-  if (method === "POST") headers["X-Idempotency-Key"] = crypto.randomUUID();
+  if (method === "POST") headers["X-Idempotency-Key"] = idempotencyKey ?? crypto.randomUUID();
 
   const response = await fetch(`${FLW_BASE_URL}${path}`, {
     method,
@@ -166,7 +166,7 @@ Deno.serve(async (req: Request) => {
     // Verify the transaction belongs to this user and get plan info
     const { data: transaction } = await supabase
       .from("transactions")
-      .select("id, plan_id, user_id, amount_gbp, payment_reference")
+      .select("id, plan_id, user_id, amount_gbp, payment_reference, status, idempotency_key")
       .eq("id", payload.transaction_id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -190,7 +190,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Plan not found" }, 404);
     }
 
-    if (plan.status !== "awaiting_payment") {
+    if (plan.status !== "awaiting_payment" && plan.status !== "payment_processing") {
       return jsonResponse({
         success: false,
         error: "Payment can only be initiated for orders in the awaiting_payment state",
@@ -232,21 +232,23 @@ Deno.serve(async (req: Request) => {
     }
 
     // The KYC gate has passed; atomically claim the single payment initiation.
-    const { data: claimedPlan, error: claimError } = await serviceClient
-      .from("plans")
-      .update({ status: "payment_processing", payment_status: "processing" })
-      .eq("id", transaction.plan_id)
-      .eq("status", "awaiting_payment")
-      .select("id")
-      .maybeSingle();
+    if (plan.status === "awaiting_payment") {
+      const { data: claimedPlan, error: claimError } = await serviceClient
+        .from("plans")
+        .update({ status: "payment_processing", payment_status: "processing" })
+        .eq("id", transaction.plan_id)
+        .eq("status", "awaiting_payment")
+        .select("id")
+        .maybeSingle();
 
-    if (claimError) throw claimError;
-    if (!claimedPlan) {
-      return jsonResponse({
-        success: false,
-        error: "Payment initiation is already in progress or no longer available.",
-        error_code: "PAYMENT_ALREADY_PROCESSING",
-      }, 409);
+      if (claimError) throw claimError;
+      if (!claimedPlan) {
+        return jsonResponse({
+          success: false,
+          error: "Payment initiation is already in progress or no longer available.",
+          error_code: "PAYMENT_ALREADY_PROCESSING",
+        }, 409);
+      }
     }
 
     // Generate one single-use nonce for this card-encryption request.
@@ -261,16 +263,14 @@ Deno.serve(async (req: Request) => {
     ]);
 
     // Deterministic idempotency key
-    const idempotencyKey = `SENDA-PAY-${transaction.plan_id}`;
+    const idempotencyKey = transaction.idempotency_key ?? `SENDA-PAY-${transaction.plan_id}`;
 
     const { error: idempotencyError } = await serviceClient
       .from("transactions")
       .update({ idempotency_key: idempotencyKey })
       .eq("id", payload.transaction_id);
 
-    if (idempotencyError) {
-      console.error("Failed to store idempotency key:", idempotencyError);
-    }
+    if (idempotencyError) throw idempotencyError;
 
     // Build customer object from profile data
     const customer: Record<string, unknown> = {
@@ -310,7 +310,7 @@ Deno.serve(async (req: Request) => {
 
     const accessToken = await getAccessToken();
     const { response, data } = await flutterwaveRequest(
-      accessToken, "POST", "/orchestration/direct-charges", chargePayload
+      accessToken, "POST", "/orchestration/direct-charges", chargePayload, idempotencyKey
     );
 
     if (!response.ok) {
