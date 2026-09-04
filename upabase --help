@@ -1,0 +1,17 @@
+[35mapp/plan/[id].tsx[m[36m:[m[32m215[m[36m:[m    if (recipient.verification_status !== 'verified' || !recipient.[1;31mflutterwave_recipient_id[m) {
+[35mapp/recipient/[id].tsx[m[36m:[m[32m551[m[36m:[m              data.[1;31mflutterwave_recipient_id[m ??
+[35mapp/recipient/[id].tsx[m[36m:[m[32m1100[m[36m:[m            [1;31mflutterwave_recipient_id[m:
+[35msupabase/functions/flutterwave-recipients/index.ts[m[36m:[m[32m312[m[36m:[m        [1;31mflutterwave_recipient_id[m: flwRecipientId,
+[35msupabase/functions/flutterwave-recipients/index.ts[m[36m:[m[32m448[m[36m:[m        [1;31mflutterwave_recipient_id[m: flwRecipientId,
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m165[m[36m:[m  if (!snapshot?.[1;31mflutterwave_recipient_id[m) {
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m189[m[36m:[m      recipient_id: snapshot.[1;31mflutterwave_recipient_id[m,
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m442[m[36m:[m            currency, [1;31mflutterwave_recipient_id[m, verification_status
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m461[m[36m:[m            [1;31mflutterwave_recipient_id[m: recipient.[1;31mflutterwave_recipient_id[m ?? null,
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m648[m[36m:[m          const recipientId = snapshot?.[1;31mflutterwave_recipient_id[m;
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m982[m[36m:[m        (!snapshot?.[1;31mflutterwave_recipient_id[m || snapshot?.verification_status !== "verified")
+[35msupabase/functions/senda-orchestrate/index.ts[m[36m:[m[32m1023[m[36m:[m            recipient_id: snapshot.[1;31mflutterwave_recipient_id[m,
+[35msupabase/functions/senda-quote/index.ts[m[36m:[m[32m212[m[36m:[m      .select("id, recipient_id, amount_gbp, amount_destination, fx_rate, receiving_method, destination_currency, recipient:recipients(id, name, country, receiving_method, phone, mobile_money_network, mobile_money_provider, bank_code, account_number, destination_country, currency, [1;31mflutterwave_recipient_id[m)")
+[35msupabase/migrations/20260814093000_20260814_senda_phase1_flutterwave.sql.sql[m[36m:[m[32m26[m[36m:[m- `[1;31mflutterwave_recipient_id[m` (text) - Flutterwave recipient reference (if pre-created)
+[35msupabase/migrations/20260814093000_20260814_senda_phase1_flutterwave.sql.sql[m[36m:[m[32m104[m[36m:[mALTER TABLE recipients ADD COLUMN IF NOT EXISTS [1;31mflutterwave_recipient_id[m text;
+[35mtypes/database.ts[m[36m:[m[32m76[m[36m:[m  [1;31mflutterwave_recipient_id[m: string | null;
+[35mtypes/database.ts[m[36m:[m[32m184[m[36m:[m  [1;31mflutterwave_recipient_id[m: string | null;
