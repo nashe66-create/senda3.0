@@ -182,7 +182,7 @@ Deno.serve(async (req: Request) => {
     // Verify the plan is in awaiting_payment status and quote is locked
     const { data: plan } = await serviceClient
       .from("plans")
-      .select("id, status, quote_locked_at, customer_pays, payment_status")
+      .select("id, status, quote_locked_at, quote_expires_at, customer_pays, payment_status")
       .eq("id", transaction.plan_id)
       .maybeSingle();
 
@@ -190,7 +190,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Plan not found" }, 404);
     }
 
-    if (plan.status !== "awaiting_payment" && plan.status !== "payment_processing") {
+    if (plan.status !== "awaiting_payment" && plan.status !== "payment_processing" && plan.status !== "payment_failed") {
       return jsonResponse({
         success: false,
         error: "Payment can only be initiated for orders in the awaiting_payment state",
@@ -202,6 +202,14 @@ Deno.serve(async (req: Request) => {
     if (!plan.quote_locked_at) {
       return jsonResponse({
         success: false, error: "Quote must be locked before payment", error_code: "QUOTE_NOT_LOCKED" }, 400);
+    }
+
+    if (!plan.quote_expires_at || new Date(plan.quote_expires_at).getTime() <= Date.now()) {
+      return jsonResponse({
+        success: false,
+        error: "This quote has expired. Please create a new quote before paying.",
+        error_code: "QUOTE_EXPIRED",
+      }, 409);
     }
 
     // Verify the charge amount matches the locked customer_pays
@@ -232,12 +240,12 @@ Deno.serve(async (req: Request) => {
     }
 
     // The KYC gate has passed; atomically claim the single payment initiation.
-    if (plan.status === "awaiting_payment") {
+    if (plan.status === "awaiting_payment" || plan.status === "payment_failed") {
       const { data: claimedPlan, error: claimError } = await serviceClient
         .from("plans")
         .update({ status: "payment_processing", payment_status: "processing" })
         .eq("id", transaction.plan_id)
-        .eq("status", "awaiting_payment")
+        .in("status", ["awaiting_payment", "payment_failed"])
         .select("id")
         .maybeSingle();
 

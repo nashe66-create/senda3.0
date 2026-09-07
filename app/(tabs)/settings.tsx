@@ -31,6 +31,7 @@ import { Colors, Spacing, Typography } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { Profile } from '@/types/database';
 import { syncCorridors } from '@/lib/data';
+import { canStartAccountSetup, isAccountSetupComplete } from '@/lib/account';
 
 export default function SettingsScreen() {
   const { user, profile, signOut, refreshProfile } = useAuth();
@@ -48,8 +49,8 @@ export default function SettingsScreen() {
 
   const hasSenderId = Boolean(profile?.flutterwave_sender_id);
   const rawKycStatus = profile?.kyc_status ?? 'unverified';
-  const kycStatus = rawKycStatus === 'verified' && !hasSenderId ? 'unverified' : rawKycStatus;
-  const needsVerification = kycStatus !== 'rejected' && (kycStatus !== 'verified' || !hasSenderId);
+  const kycStatus = isAccountSetupComplete(profile) ? 'verified' : rawKycStatus === 'verified' ? 'unverified' : rawKycStatus;
+  const canStartKyc = canStartAccountSetup(profile);
 
   const kycConfig: Record<
     string,
@@ -73,8 +74,8 @@ export default function SettingsScreen() {
       icon: Clock,
       color: Colors.warning[600],
       bg: Colors.warning[50],
-      label: 'Account Setup Complete',
-      desc: 'Your account details have been saved. You can start sending money.',
+      label: 'Verification Pending',
+      desc: 'Your account details were submitted. Sending will be available after verification.',
     },
     rejected: {
       icon: AlertCircle,
@@ -161,7 +162,7 @@ export default function SettingsScreen() {
         </View>
       </Card>
 
-      {needsVerification && (
+      {canStartKyc && (
         <TouchableOpacity
           style={styles.kycBtn}
           onPress={handleStartKyc}

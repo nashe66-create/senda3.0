@@ -56,6 +56,7 @@ import {
   releasePayouts,
   confirmPayouts,
   retryPayout,
+  requestPayoutResolution,
   cancelOrder,
 } from '@/lib/data';
 import {
@@ -67,6 +68,7 @@ import {
   QuoteResult,
 } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
+import { canStartAccountSetup, isAccountSetupComplete } from '@/lib/account';
 import { ShieldAlert } from 'lucide-react-native';
 
 const methodIcons: Record<ReceivingMethod, typeof Smartphone> = {
@@ -228,6 +230,13 @@ export default function PlanDetailScreen() {
       return;
     }
 
+    if (plan?.destination_currency && recipient.currency !== plan.destination_currency) {
+      setCommitmentError(
+        `This recipient uses ${recipient.currency ?? 'an unknown currency'}, but this plan is for ${plan.destination_currency}. All recipients must use the same currency.`
+      );
+      return;
+    }
+
     // Budget check for fixed_source
     if (isFixedSource && budget > 0) {
       if (amount > remaining + 0.01) {
@@ -342,6 +351,11 @@ export default function PlanDetailScreen() {
   const handleLockAndPay = async () => {
     if (!quote || !quote.success) return;
 
+    if (!isAccountSetupComplete(profile)) {
+      setQuoteError('Complete account setup and wait for verification before paying.');
+      return;
+    }
+
     if (quoteCountdown !== null && quoteCountdown <= 0) {
       setQuoteError('Quote has expired. Please get a new quote.');
       return;
@@ -451,6 +465,20 @@ export default function PlanDetailScreen() {
     }
   };
 
+  const handleRequestResolution = async (commitmentId: string) => {
+    setRetryingId(commitmentId);
+    try {
+      const result = await requestPayoutResolution(commitmentId, 'Customer requested support review for a failed payout.');
+      if (!result.success) {
+        Alert.alert('Unable to request review', result.error ?? 'Please try again later.');
+        return;
+      }
+      await loadPlan();
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
   // =======================================================
   // CANCEL ORDER
   // =======================================================
@@ -522,8 +550,9 @@ export default function PlanDetailScreen() {
 
   // Filter recipients to same corridor
   const eligibleRecipients = recipients.filter((r) => {
-    if (!plan.destination_country) return true;
-    return r.country === plan.destination_country;
+    if (plan.destination_country && r.country !== plan.destination_country) return false;
+    if (plan.destination_currency && r.currency !== plan.destination_currency) return false;
+    return true;
   });
 
   // Total destination amounts for fixed_destination summary
@@ -626,6 +655,14 @@ export default function PlanDetailScreen() {
               <Text style={styles.paymentStatusValue}>{plan.payment_status}</Text>
             </View>
           )}
+          {plan.financial_reconciliation_status && plan.financial_reconciliation_status !== 'pending' && (
+            <View style={styles.paymentStatusRow}>
+              <Text style={styles.paymentStatusLabel}>Order review: </Text>
+              <Text style={styles.paymentStatusValue}>
+                {plan.financial_reconciliation_status === 'reconciled' ? 'Complete' : 'Needs review'}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* MODE INDICATOR */}
@@ -676,6 +713,10 @@ export default function PlanDetailScreen() {
               ? COUNTRIES.find((c) => c.code === recipient.country)
               : null;
             const isFailed = commitment.status === 'failed';
+            const needsReview = commitment.status === 'reconciliation_required' ||
+              commitment.status === 'creating_unknown' ||
+              commitment.status === 'confirming_unknown' ||
+              commitment.status === 'resolution';
 
             const showGbp = Number(commitment.amount_gbp) > 0;
             const showDest = Number(commitment.amount_destination) > 0;
@@ -795,18 +836,36 @@ export default function PlanDetailScreen() {
                   </View>
                 )}
 
+                {needsReview && (
+                  <View style={styles.statusInfoBox}>
+                    <AlertCircle color={Colors.warning[600]} size={16} strokeWidth={2} />
+                    <Text style={styles.statusInfoText}>
+                      This payout needs review before it can be treated as complete. No duplicate payout will be created automatically.
+                    </Text>
+                  </View>
+                )}
+
                 {isFailed && (plan.status === 'partially_failed' || plan.status === 'failed') && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (commitment.payout_method) {
-                        handleRetryPayout(commitment.id, commitment.payout_method);
-                      }
-                    }}
-                    style={styles.retryBtn}
-                  >
-                    <RefreshCw color={Colors.primary[600]} size={14} strokeWidth={2} />
-                    <Text style={styles.retryBtnText}>Retry payout</Text>
-                  </TouchableOpacity>
+                  <View>
+                    {commitment.payout_method && (
+                      <TouchableOpacity
+                        onPress={() => handleRetryPayout(commitment.id, commitment.payout_method as PayoutMethod)}
+                        style={styles.retryBtn}
+                        disabled={retryingId === commitment.id}
+                      >
+                        <RefreshCw color={Colors.primary[600]} size={14} strokeWidth={2} />
+                        <Text style={styles.retryBtnText}>Retry payout</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => handleRequestResolution(commitment.id)}
+                      style={styles.retryBtn}
+                      disabled={retryingId === commitment.id}
+                    >
+                      <AlertCircle color={Colors.warning[600]} size={14} strokeWidth={2} />
+                      <Text style={styles.retryBtnText}>Request support review</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </Card>
             );
@@ -832,7 +891,7 @@ export default function PlanDetailScreen() {
           </View>
         )}
 
-        {(!profile?.flutterwave_sender_id || profile.kyc_status !== 'verified') && plan.status !== 'draft' && (
+        {canStartAccountSetup(profile) && plan.status !== 'draft' && (
           <TouchableOpacity onPress={() => router.push('/kyc')} style={styles.kycBanner}>
             <ShieldAlert color={Colors.warning[600]} size={20} strokeWidth={2} />
             <View style={styles.kycBannerText}>

@@ -21,13 +21,27 @@ export type OrderStatus =
 
 export type PaymentStatus = 'pending' | 'processing' | 'successful' | 'failed';
 
-export type PayoutStatus = 'pending' | 'ready' | 'submitted' | 'processing' | 'completed' | 'failed';
+export type PayoutStatus =
+  | 'pending'
+  | 'ready'
+  | 'creating'
+  | 'creating_unknown'
+  | 'submitted'
+  | 'confirming'
+  | 'confirming_unknown'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'reconciliation_required'
+  | 'resolution';
 
 export type PayoutMethod = 'bank' | 'mobile_money' | 'cash_pickup';
 
 export type CommitmentStatus = PayoutStatus;
 
 export type TransactionStatus = 'pending' | 'successful' | 'failed' | 'refunded';
+
+export type FinancialReconciliationStatus = 'pending' | 'reconciled' | 'requires_review';
 
 export type ReceivingMethod = 'mobile_money' | 'bank_account' | 'cash_pickup' | 'bill_payment';
 
@@ -118,6 +132,7 @@ export interface Plan {
   quote_expires_at: string | null;
   quote_locked_at: string | null;
   payment_status: PaymentStatus;
+  financial_reconciliation_status: FinancialReconciliationStatus;
 }
 
 export interface Commitment {
@@ -140,6 +155,8 @@ export interface Commitment {
   provider_status: string | null;
   payout_method: PayoutMethod | null;
   failure_reason_display: string | null;
+  resolution_reason: string | null;
+  resolved_at: string | null;
 }
 
 export interface Transaction {

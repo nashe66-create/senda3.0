@@ -132,6 +132,18 @@ async function applyVerifiedTransferStatus(supabase: any, transferId: string, re
     flutterwave_transfer_id: String(transferId), provider_status: providerStatus, status: nextStatus,
     failure_reason: error, failure_reason_display: nextStatus === "failed" ? customerFriendlyFailure(error) : null,
   }).eq("id", updated.commitment_id).in("status", activeStatuses);
+  const { data: commitment } = await supabase.from("commitments")
+    .select("plan_id")
+    .eq("id", updated.commitment_id)
+    .maybeSingle();
+  if (commitment?.plan_id) {
+    const { error: reconciliationError } = await supabase.rpc("evaluate_financial_reconciliation", {
+      p_plan_id: commitment.plan_id,
+    });
+    if (reconciliationError) {
+      console.error("Failed to evaluate financial reconciliation:", reconciliationError);
+    }
+  }
   return true;
 }
 
@@ -215,6 +227,10 @@ Deno.serve(async (req: Request) => {
     });
     if (dedupError) {
       if (dedupError.code !== "23505") throw dedupError;
+      return new Response(JSON.stringify({ received: true, duplicate: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const accessToken = await getAccessToken();

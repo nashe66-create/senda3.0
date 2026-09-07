@@ -948,7 +948,7 @@ export async function submitKyc(payload: {
   success: boolean;
   sender_id?: string;
   kyc_status?: string;
-  verification_mode?: 'sandbox' | 'provider_pending' | null;
+  verification_mode?: 'sandbox' | 'provider_verified' | 'provider_pending' | null;
   error?: string;
   _flutterwave_response?: {
     status?: number;
@@ -993,7 +993,7 @@ export async function fetchKycStatus(): Promise<{
   kyc_submitted_at?: string;
   kyc_verified_at?: string;
   has_sender_id?: boolean;
-  verification_mode?: 'sandbox' | 'provider_pending' | null;
+  verification_mode?: 'sandbox' | 'provider_verified' | 'provider_pending' | null;
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -1399,7 +1399,7 @@ export async function createFlutterwaveRecipient(params: {
   currency: string;
   mobileMoney?: { network: string; msisdn: string; country: string };
   bankAccount?: { account_number: string; bank_code: string; country: string };
-}): Promise<{ success: boolean; accountName: string | null; error?: string }> {
+}): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
@@ -1430,11 +1430,12 @@ export async function createFlutterwaveRecipient(params: {
 
   const result = await response.json();
   if (!response.ok || !result.success) {
-    return { success: false, accountName: null, error: result.error ?? 'Failed to create recipient' };
+    return { success: false, recipientId: null, accountName: null, error: result.error ?? 'Failed to create Flutterwave recipient' };
   }
 
   return {
     success: true,
+    recipientId: result.recipient_id,
     accountName: result.account_name,
   };
 }
@@ -1445,7 +1446,7 @@ export async function updateFlutterwaveRecipient(params: {
   currency: string;
   mobileMoney?: { network: string; msisdn: string; country: string };
   bankAccount?: { account_number: string; bank_code: string; country: string };
-}): Promise<{ success: boolean; accountName: string | null; error?: string }> {
+}): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
@@ -1476,11 +1477,12 @@ export async function updateFlutterwaveRecipient(params: {
 
   const result = await response.json();
   if (!response.ok || !result.success) {
-    return { success: false, accountName: null, error: result.error ?? 'Failed to update recipient' };
+    return { success: false, recipientId: null, accountName: null, error: result.error ?? 'Failed to update Flutterwave recipient' };
   }
 
   return {
     success: true,
+    recipientId: result.recipient_id,
     accountName: result.account_name,
   };
 }
@@ -1656,6 +1658,27 @@ export async function retryPayout(commitmentId: string, payoutMethod: PayoutMeth
     return { success: false, error: data?.error ?? 'Failed to retry payout' };
   }
   return data;
+}
+
+export async function requestPayoutResolution(commitmentId: string, reason: string): Promise<{
+  success: boolean;
+  status?: string;
+  error?: string;
+}> {
+  const supabaseUrl = await getSupabaseUrl();
+  const headers = await getAuthHeaders();
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/senda-reconciliation`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ action: 'resolve', commitment_id: commitmentId, resolution_reason: reason }),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    return { success: false, error: data?.error ?? 'Unable to request support review' };
+  }
+  return { success: true, status: data.resolution?.status };
 }
 
 export async function cancelOrder(planId: string): Promise<{

@@ -75,6 +75,111 @@ function getProviderErrorMessage(data: any): string {
   return "Account setup failed. Please try again.";
 }
 
+function isValidCalendarDate(value: unknown): boolean {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function calculateAge(dateOfBirth: string): number | null {
+  if (!isValidCalendarDate(dateOfBirth)) return null;
+  const [year, month, day] = dateOfBirth.split("-").map(Number);
+  const today = new Date();
+  let age = today.getUTCFullYear() - year;
+  const birthdayPassed = today.getUTCMonth() + 1 > month ||
+    (today.getUTCMonth() + 1 === month && today.getUTCDate() >= day);
+  if (!birthdayPassed) age -= 1;
+  return age;
+}
+
+function isFutureDate(value: string): boolean {
+  if (!isValidCalendarDate(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  const today = new Date();
+  const todayStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  return date > todayStart;
+}
+
+function normalizeUkPhone(value: unknown): string | null {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.startsWith("44")) return digits.slice(2);
+  if (digits.startsWith("0")) return digits.slice(1);
+  return digits;
+}
+
+function logSenderRuntimeDiagnostics(senderPayload: {
+  type: string;
+  name: { first: string; last: string };
+  email: string;
+  phone: { country_code: string; number: string };
+  address: {
+    line1: string;
+    line2?: string;
+    city: string;
+    state?: string;
+    postal_code: string;
+    country: string;
+  };
+  date_of_birth: string;
+}) {
+  const nameWords = `${senderPayload.name.first} ${senderPayload.name.last}`.trim().split(/\s+/).filter(Boolean);
+  const nameText = `${senderPayload.name.first} ${senderPayload.name.last}`.trim();
+  const emailParts = senderPayload.email.split("@");
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderPayload.email);
+  const phoneDigits = senderPayload.phone.number.replace(/\D/g, "");
+  const dateFormatValid = /^\d{4}-\d{2}-\d{2}$/.test(senderPayload.date_of_birth);
+  const validCalendarDate = isValidCalendarDate(senderPayload.date_of_birth);
+  const dateOfBirth = validCalendarDate ? new Date(`${senderPayload.date_of_birth}T00:00:00Z`) : null;
+
+  console.log("=== FLUTTERWAVE SENDER RUNTIME DIAGNOSTICS ===", {
+    NAME: {
+      type: typeof senderPayload.name,
+      word_count: nameWords.length,
+      character_count: nameText.length,
+      first_component_present: Boolean(senderPayload.name.first),
+      last_component_present: Boolean(senderPayload.name.last),
+      unsupported_or_special_characters: /[^\p{L}\p{M}\s.'-]/u.test(nameText),
+    },
+    EMAIL: {
+      valid_email_format: emailValid,
+      character_count: senderPayload.email.length,
+      domain_present: emailParts.length === 2 && Boolean(emailParts[1]),
+    },
+    PHONE: {
+      type: typeof senderPayload.phone,
+      country_code: senderPayload.phone.country_code,
+      digit_count: phoneDigits.length,
+      valid_phone_characters: /^\d+$/.test(senderPayload.phone.number),
+    },
+    ADDRESS: {
+      type: typeof senderPayload.address,
+      line1_present: Boolean(senderPayload.address.line1),
+      line1_character_count: senderPayload.address.line1.length,
+      line2_present: Boolean(senderPayload.address.line2),
+      line2_character_count: senderPayload.address.line2?.length ?? 0,
+      city_present: Boolean(senderPayload.address.city),
+      city_character_count: senderPayload.address.city.length,
+      state_present: Boolean(senderPayload.address.state),
+      state_character_count: senderPayload.address.state?.length ?? 0,
+      postal_code_present: Boolean(senderPayload.address.postal_code),
+      postal_code_gb_format_valid: /^[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}$/i.test(senderPayload.address.postal_code),
+      country: senderPayload.address.country,
+      country_length: senderPayload.address.country.length,
+    },
+    DATE_OF_BIRTH: {
+      type: typeof senderPayload.date_of_birth,
+      exact_yyyy_mm_dd_format: dateFormatValid,
+      valid_calendar_date: validCalendarDate,
+      future_date: isFutureDate(senderPayload.date_of_birth),
+      age: calculateAge(senderPayload.date_of_birth),
+    },
+    OUTBOUND_JSON_KEYS: Object.keys(senderPayload),
+    NATIONAL_IDENTIFICATION_ABSENT: !Object.prototype.hasOwnProperty.call(senderPayload, "national_identification"),
+    HAS_NATIONAL_IDENTIFICATION_ABSENT: !Object.prototype.hasOwnProperty.call(senderPayload, "has_national_identification"),
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -157,6 +262,13 @@ Deno.serve(async (req: Request) => {
         }, 400);
       }
 
+      if (!isValidCalendarDate(String(date_of_birth)) || isFutureDate(String(date_of_birth))) {
+        return jsonResponse({
+          success: false,
+          error: "Invalid date of birth: use a valid date in YYYY-MM-DD format that is not in the future",
+        }, 400);
+      }
+
       // Fetch existing profile to check if sender already exists
       const { data: existingProfile } = await supabase
         .from("profiles")
@@ -180,38 +292,40 @@ Deno.serve(async (req: Request) => {
         }, 400);
       }
 
-      // Flatten name: combine first, middle (optional), and last name
-      const fullName = `${name.first} ${name.middle || ""}${name.middle ? " " : ""}${name.last}`.trim();
+      const phoneNumber = normalizeUkPhone(phone.number);
+      if (!phoneNumber || !/^7\d{9}$/.test(phoneNumber)) {
+        return jsonResponse({
+          success: false,
+          error: "Invalid UK phone number",
+        }, 400);
+      }
 
-      // Flatten phone: format as full phone number with country code
-      const countryCode = phone.country_code || "44";
-      const phoneNumber = String(phone.number).replace(/^\+/, "").replace(/^0/, "");
-      const fullPhone = `+${countryCode}${phoneNumber}`;
-
-      // Format address for Flutterwave
-      const addressLine = [address.line1, address.line2].filter(Boolean).join(", ");
       const flwAddress = {
-        line1: address.line1,
-        line2: address.line2 || "",
-        city: address.city,
-        state: address.state || "",
-        postal_code: address.postal_code,
-        country: address.country || "GB",
+        line1: String(address.line1).trim(),
+        ...(address.line2 ? { line2: String(address.line2).trim() } : {}),
+        city: String(address.city).trim(),
+        ...(address.state ? { state: String(address.state).trim() } : {}),
+        postal_code: String(address.postal_code).trim(),
+        country: "GB",
       };
 
       // Create the transfer sender entity via POST /transfers/senders.
       // This is the only Flutterwave call needed — the sender_id is required
       // for GBP-source transfers. The /customers endpoint is not needed for this flow.
-      // For MVP, we submit without national_identification; Flutterwave may accept it
-      // or return validation error if national_id is mandatory (not just recommended).
+      // National identification is intentionally omitted for the Senda MVP flow.
       const senderPayload = {
         type: "bank_gbp",
-        name: fullName,
+        name: {
+          first: String(name.first).trim(),
+          last: `${name.middle ? `${String(name.middle).trim()} ` : ""}${String(name.last).trim()}`.trim(),
+        },
         email: userEmail,
-        phone: fullPhone,
+        phone: {
+          country_code: "44",
+          number: phoneNumber,
+        },
         address: flwAddress,
-        date_of_birth,
-        // national_identification is omitted for MVP sender creation flow
+        date_of_birth: String(date_of_birth),
       };
 
       // DIAGNOSTIC LOGGING (safe, non-sensitive)
@@ -220,9 +334,9 @@ Deno.serve(async (req: Request) => {
       console.log("Base URL:", FLW_BASE_URL);
       console.log("Payload structure (non-sensitive):", {
         type: senderPayload.type,
-        name: "[redacted]",
+        name: { first: "[redacted]", last: "[redacted]" },
         email: userEmail ? "[present]" : "[missing]",
-        phone: "[redacted phone]",
+        phone: { country_code: "44", number: "[redacted]" },
         address: {
           line1: "[redacted]",
           line2: "[redacted]",
@@ -235,6 +349,7 @@ Deno.serve(async (req: Request) => {
         has_national_identification: false,
       });
       console.log("Actual payload keys:", Object.keys(senderPayload));
+      logSenderRuntimeDiagnostics(senderPayload);
 
       const { response: senderResp, data: senderData } = await flutterwaveRequest(
         accessToken, "POST", "/transfers/senders", senderPayload
@@ -281,14 +396,14 @@ Deno.serve(async (req: Request) => {
         }, senderResp.status || 502);
       }
 
-      // Store sender details and mark as submitted. Identity document fields remain
-      // in the schema but are not populated for this MVP flow.
+      // A successful provider sender response is the authoritative acceptance signal
+      // for this flow. Identity document fields remain unused for the MVP.
       const updateData: Record<string, unknown> = {
         kyc_date_of_birth: date_of_birth ?? null,
         kyc_address: flwAddress,
         kyc_submitted_at: new Date().toISOString(),
-        kyc_status: SANDBOX_KYC_ENABLED ? "verified" : "submitted",
-        kyc_verified_at: SANDBOX_KYC_ENABLED ? new Date().toISOString() : null,
+        kyc_status: "verified",
+        kyc_verified_at: new Date().toISOString(),
         flutterwave_sender_id: senderId,
       };
 
@@ -303,11 +418,10 @@ Deno.serve(async (req: Request) => {
 
       return jsonResponse({
         success: true,
-        kyc_status: SANDBOX_KYC_ENABLED ? "verified" : "submitted",
-        verification_mode: SANDBOX_KYC_ENABLED ? "sandbox" : "provider_pending",
-        message: SANDBOX_KYC_ENABLED
-          ? "Account setup complete for sandbox testing."
-          : "Account setup complete. You can now send money.",
+        sender_id: senderId,
+        kyc_status: "verified",
+        verification_mode: SANDBOX_KYC_ENABLED ? "sandbox" : "provider_verified",
+        message: "Account setup complete. You can now send money.",
       });
     }
 
@@ -331,11 +445,9 @@ Deno.serve(async (req: Request) => {
         kyc_submitted_at: profile.kyc_submitted_at,
         kyc_verified_at: profile.kyc_verified_at,
         has_sender_id: Boolean(profile.flutterwave_sender_id),
-        verification_mode: profile.kyc_status === "submitted"
-          ? "provider_pending"
-          : profile.kyc_status === "verified" && FLW_BASE_URL === "https://developersandbox-api.flutterwave.com"
-          ? "sandbox"
-          : null,
+        verification_mode: profile.kyc_status === "verified"
+          ? FLW_BASE_URL === "https://developersandbox-api.flutterwave.com" ? "sandbox" : "provider_verified"
+          : profile.kyc_status === "submitted" ? "provider_pending" : null,
       });
     }
 
