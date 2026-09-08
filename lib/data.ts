@@ -1637,6 +1637,30 @@ export async function confirmPayouts(planId: string): Promise<{
   return data;
 }
 
+export async function sendMoney(planId: string): Promise<{
+  success: boolean;
+  plan_id?: string;
+  total?: number;
+  errors?: string[];
+  payouts?: Array<{ commitment_id: string; status: string; error?: string | null }>;
+  error?: string;
+}> {
+  const supabaseUrl = await getSupabaseUrl();
+  const headers = await getAuthHeaders();
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/senda-orchestrate?action=send-money`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ plan_id: planId }),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    return { success: false, error: data?.error ?? 'Failed to send money' };
+  }
+  return data;
+}
+
 export async function retryPayout(commitmentId: string, payoutMethod: PayoutMethod): Promise<{
   success: boolean;
   commitment_id?: string;

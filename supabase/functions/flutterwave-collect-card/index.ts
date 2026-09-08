@@ -322,6 +322,13 @@ Deno.serve(async (req: Request) => {
     );
 
     if (!response.ok) {
+      console.error("Flutterwave direct charge failed", {
+        endpoint: "/orchestration/direct-charges",
+        status: response.status,
+        error_code: data?.error?.code ?? data?.code ?? null,
+        error_message: data?.error?.message ?? data?.message ?? null,
+        error_type: data?.error?.type ?? null,
+      });
       await serviceClient
         .from("transactions")
         .update({ status: "failed" })

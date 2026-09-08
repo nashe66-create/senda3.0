@@ -244,17 +244,17 @@ async function releaseAttemptBackedPayouts(supabase: any, serviceClient: any, ac
     .select("id, status, payment_status, quote_locked_at, destination_country")
     .eq("id", planId).eq("user_id", userId).maybeSingle();
   if (!plan || plan.status !== "funded" || plan.payment_status !== "successful" || !plan.quote_locked_at) {
-    return jsonResponse({ success: false, error: "Payouts can only be released for a funded order with a locked quote" }, 400);
+    return { success: false, status: 400, error: "Payouts can only be released for a funded order with a locked quote" };
   }
   const { data: transaction } = await serviceClient.from("transactions")
     .select("id").eq("plan_id", planId).eq("status", "successful")
     .not("completed_at", "is", null).maybeSingle();
   if (!transaction) {
-    return jsonResponse({ success: false, error: "Payouts require a successful verified customer collection" }, 400);
+    return { success: false, status: 400, error: "Payouts require a successful verified customer collection" };
   }
   const { data: commitments } = await serviceClient.from("commitments")
     .select("id, payout_method, recipient_snapshot").eq("plan_id", planId).in("status", ["ready", "pending"]);
-  if (!commitments?.length) return jsonResponse({ success: false, error: "No ready payouts to release" }, 400);
+  if (!commitments?.length) return { success: false, status: 400, error: "No ready payouts to release" };
 
   const { data: corridor } = await serviceClient.from("payout_corridor_countries")
     .select("mobile_money_supported, cash_pickup_supported, bank_supported")
@@ -277,12 +277,12 @@ async function releaseAttemptBackedPayouts(supabase: any, serviceClient: any, ac
   }
   const submitted = payouts.filter((p) => p.success).length;
   const failed = payouts.length - submitted;
-  return jsonResponse({ success: true, plan_id: planId, total: payouts.length, submitted, failed, skipped: 0, errors: payouts.filter((p) => p.error).map((p) => p.error), payouts });
+  return { success: true, plan_id: planId, total: payouts.length, submitted, failed, skipped: 0, errors: payouts.filter((p) => p.error).map((p) => p.error), payouts };
 }
 
 async function confirmAttemptBackedPayouts(supabase: any, serviceClient: any, accessToken: string, planId: string) {
   const { data: commitments } = await serviceClient.from("commitments").select("id").eq("plan_id", planId).eq("status", "submitted");
-  if (!commitments?.length) return jsonResponse({ success: false, error: "No submitted payouts to confirm" }, 400);
+  if (!commitments?.length) return { success: false, status: 400, error: "No submitted payouts to confirm" };
   const payouts: any[] = [];
   for (const commitment of commitments) {
     const { data: claimed } = await supabase.rpc("claim_transfer_confirmation", { p_commitment_id: commitment.id });
@@ -296,11 +296,29 @@ async function confirmAttemptBackedPayouts(supabase: any, serviceClient: any, ac
         { initiate: true },
         `SENDA-PAYOUT-CONFIRM-${attempt.attempt_id}`,
       );
+      let providerStatus = data?.data?.status ?? null;
+      let definitiveFailure = !response.ok;
+      let errorMessage = response.ok ? null : (data?.message ?? "Transfer confirmation was rejected");
+
+      if (response.ok) {
+        const verification = await flutterwaveRequest(
+          accessToken,
+          "GET",
+          `/transfers/${attempt.provider_transfer_id}`,
+        );
+        if (!verification.response.ok || !verification.data?.data) {
+          providerStatus = null;
+          definitiveFailure = false;
+          errorMessage = "Transfer confirmation status could not be verified.";
+        } else {
+          providerStatus = verification.data.data.status ?? null;
+        }
+      }
       const { error: recordError } = await serviceClient.rpc("record_transfer_confirmation_result", {
         p_attempt_id: attempt.attempt_id,
-        p_provider_status: data?.data?.status ?? null,
-        p_definitive_failure: !response.ok,
-        p_error_message: response.ok ? null : (data?.message ?? "Transfer confirmation was rejected"),
+        p_provider_status: providerStatus,
+        p_definitive_failure: definitiveFailure,
+        p_error_message: errorMessage,
       });
       if (recordError) {
         await requireTransferReconciliation(
@@ -312,7 +330,7 @@ async function confirmAttemptBackedPayouts(supabase: any, serviceClient: any, ac
         payouts.push({ commitment_id: commitment.id, status: "reconciliation_required", error: "Confirmation outcome requires reconciliation before any retry." });
         continue;
       }
-      payouts.push({ commitment_id: commitment.id, status: data?.data?.status ?? (response.ok ? "processing" : "failed") });
+      payouts.push({ commitment_id: commitment.id, status: providerStatus ?? (response.ok ? "processing" : "failed") });
     } catch (error) {
       const { error: recordError } = await serviceClient.rpc("record_transfer_confirmation_result", {
         p_attempt_id: attempt.attempt_id, p_provider_status: null, p_definitive_failure: false,
@@ -331,9 +349,9 @@ async function confirmAttemptBackedPayouts(supabase: any, serviceClient: any, ac
       }
     }
   }
-  return jsonResponse({ success: true, plan_id: planId, total: commitments.length,
+  return { success: true, plan_id: planId, total: commitments.length,
     confirmed: payouts.filter((p) => p.status === "COMPLETED" || p.status === "SUCCESSFUL").length,
-    failed: payouts.filter((p) => p.status === "failed").length, errors: payouts.filter((p) => p.error).map((p) => p.error), payouts });
+    failed: payouts.filter((p) => p.status === "failed").length, errors: payouts.filter((p) => p.error).map((p) => p.error), payouts };
 }
 
 Deno.serve(async (req: Request) => {
@@ -370,7 +388,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         success: false,
         error: "Missing action parameter",
-        supported_actions: ["lock-quote", "release-payouts", "confirm-payouts", "retry-payout", "cancel-order", "recalc-order-status"],
+        supported_actions: ["lock-quote", "release-payouts", "confirm-payouts", "send-money", "retry-payout", "cancel-order", "recalc-order-status"],
       }, 400);
     }
 
@@ -426,15 +444,26 @@ Deno.serve(async (req: Request) => {
         }, 410);
       }
 
-      // Lock the quote and transition to awaiting_payment
-      await serviceClient
+      // Lock the quote and transition to awaiting_payment.
+      const { data: lockedPlan, error: lockError } = await serviceClient
         .from("plans")
         .update({
           quote_locked_at: now.toISOString(),
           status: "awaiting_payment",
           payment_status: "pending",
         })
-        .eq("id", payload.plan_id);
+        .eq("id", payload.plan_id)
+        .select("id")
+        .maybeSingle();
+
+      if (lockError || !lockedPlan) {
+        console.error("Failed to lock quote:", lockError);
+        return jsonResponse({
+          success: false,
+          error: "The quote could not be locked. No payment was started.",
+          error_code: "QUOTE_LOCK_FAILED",
+        }, 500);
+      }
 
       // Create recipient snapshots for all commitments
       const { data: commitments } = await serviceClient
@@ -505,7 +534,8 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Missing plan_id" }, 400);
       }
 
-      return await releaseAttemptBackedPayouts(supabase, serviceClient, await getAccessToken(), userId, payload.plan_id);
+      const releaseResult = await releaseAttemptBackedPayouts(supabase, serviceClient, await getAccessToken(), userId, payload.plan_id);
+      return jsonResponse(releaseResult, releaseResult.success ? 200 : (releaseResult.status ?? 400));
 
       const { data: plan, error: planError } = await supabase
         .from("plans")
@@ -794,7 +824,8 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Missing plan_id" }, 400);
       }
 
-      return await confirmAttemptBackedPayouts(supabase, serviceClient, await getAccessToken(), payload.plan_id);
+      const confirmResult = await confirmAttemptBackedPayouts(supabase, serviceClient, await getAccessToken(), payload.plan_id);
+      return jsonResponse(confirmResult, confirmResult.success ? 200 : (confirmResult.status ?? 400));
 
       const { data: plan } = await supabase
         .from("plans")
@@ -903,6 +934,46 @@ Deno.serve(async (req: Request) => {
         confirmed,
         failed,
         errors,
+        payouts,
+      });
+    }
+
+    // =======================================================
+    // SEND MONEY — customer-facing action combining release + confirm
+    // =======================================================
+    if (action === "send-money") {
+      let payload: { plan_id: string };
+      try { payload = await req.json(); } catch {
+        return jsonResponse({ success: false, error: "Invalid JSON request body" }, 400);
+      }
+
+      if (!payload.plan_id) {
+        return jsonResponse({ success: false, error: "Missing plan_id" }, 400);
+      }
+
+      const accessToken = await getAccessToken();
+
+      const releaseResult = await releaseAttemptBackedPayouts(supabase, serviceClient, accessToken, userId, payload.plan_id);
+      if (!releaseResult.success) {
+        return jsonResponse(releaseResult, releaseResult.status ?? 400);
+      }
+
+      // Confirm every commitment now sitting at 'submitted' for this plan (claim_transfer_confirmation
+      // is per-commitment atomic, so this is safe even if some were already submitted earlier).
+      const confirmResult = await confirmAttemptBackedPayouts(supabase, serviceClient, accessToken, payload.plan_id);
+      const confirmPayouts = confirmResult.success ? confirmResult.payouts : [];
+
+      const payouts = releaseResult.payouts.map((rp: any) => {
+        const confirmed = confirmPayouts.find((cp: any) => cp.commitment_id === rp.commitment_id);
+        if (confirmed) return { commitment_id: rp.commitment_id, status: confirmed.status, error: confirmed.error ?? null };
+        return { commitment_id: rp.commitment_id, status: rp.success ? "submitted" : "failed", error: rp.error ?? null };
+      });
+
+      return jsonResponse({
+        success: true,
+        plan_id: payload.plan_id,
+        total: payouts.length,
+        errors: payouts.filter((p: any) => p.error).map((p: any) => p.error),
         payouts,
       });
     }

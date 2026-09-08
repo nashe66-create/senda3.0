@@ -36,6 +36,7 @@ export default function CollectScreen() {
 
   const [billingLine1, setBillingLine1] = useState('');
   const [billingCity, setBillingCity] = useState('');
+  const [billingCounty, setBillingCounty] = useState('');
   const [billingPostalCode, setBillingPostalCode] = useState('');
 
   const [chargeStatus, setChargeStatus] = useState<'idle' | 'processing' | 'requires_otp' | 'requires_pin' | 'requires_additional_fields' | 'redirect' | 'succeeded' | 'failed'>('idle');
@@ -112,7 +113,7 @@ export default function CollectScreen() {
         billing_address: {
           line1: billingLine1.trim(),
           city: billingCity.trim(),
-          state: '',
+          state: billingCounty.trim(),
           postal_code: billingPostalCode.trim(),
           country: 'GB',
         },
@@ -303,9 +304,10 @@ export default function CollectScreen() {
                 <Input label="City" value={billingCity} onChangeText={setBillingCity} placeholder="e.g. London" />
               </View>
               <View style={styles.flex1}>
-                <Input label="Postcode" value={billingPostalCode} onChangeText={setBillingPostalCode} placeholder="e.g. SW1A 1AA" autoCapitalize="characters" />
+                <Input label="County" value={billingCounty} onChangeText={setBillingCounty} placeholder="e.g. Greater London" />
               </View>
             </View>
+            <Input label="Postcode" value={billingPostalCode} onChangeText={setBillingPostalCode} placeholder="e.g. SW1A 1AA" autoCapitalize="characters" />
 
             <View style={styles.securityNote}>
               <Lock color={Colors.neutral[400]} size={14} strokeWidth={2} />

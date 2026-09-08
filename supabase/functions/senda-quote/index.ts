@@ -20,6 +20,14 @@ function jsonResponse(data: Record<string, unknown>, status = 200) {
   });
 }
 
+class FlutterwaveFeeError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function getAccessToken(): Promise<string> {
   const clientId = Deno.env.get("FLW_CLIENT_ID");
   const clientSecret = Deno.env.get("FLW_CLIENT_SECRET");
@@ -79,20 +87,31 @@ async function fetchFxRate(accessToken: string, sourceCurrency: string, destinat
 }
 
 async function fetchCollectionFee(accessToken: string, amountGbp: number): Promise<number> {
-  const response = await fetch(`${FLW_BASE_URL}/fees`, {
-    method: "POST",
+  // Required by Flutterwave v4 /fees: amount, currency, payment_method (country is optional context).
+  const queryParams = {
+    amount: String(amountGbp),
+    currency: "GBP",
+    payment_method: "card",
+    country: "GB",
+  };
+  const query = new URLSearchParams(queryParams);
+  const url = `${FLW_BASE_URL}/fees?${query.toString()}`;
+
+  console.log("Flutterwave collection fee request", {
+    method: "GET",
+    endpoint: "/fees",
+    base_url: FLW_BASE_URL,
+    query: queryParams,
+    has_body: false,
+  });
+
+  const response = await fetch(url, {
+    method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
-      "Content-Type": "application/json",
       "X-Trace-Id": crypto.randomUUID(),
     },
-    body: JSON.stringify({
-      amount: amountGbp,
-      currency: "GBP",
-      country: "GB",
-      payment_method: "card",
-    }),
   });
 
   const text = await response.text();
@@ -100,13 +119,29 @@ async function fetchCollectionFee(accessToken: string, amountGbp: number): Promi
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
 
   if (!response.ok) {
-    throw new Error(data?.message ?? "Failed to fetch Flutterwave collection fee");
+    console.error("Flutterwave collection fee request failed", {
+      endpoint: "/fees",
+      method: "GET",
+      status: response.status,
+      body: data,
+    });
+    const providerMessage = data?.error?.message ?? data?.message ?? data?.error_description;
+    throw new FlutterwaveFeeError(
+      `Flutterwave collection fee request failed (status ${response.status}${providerMessage ? `: ${providerMessage}` : ""})`,
+      response.status,
+    );
   }
 
   const root = data?.data ?? data;
-  const fee = Number(root?.fee ?? root?.amount?.fee ?? root?.total_fee ?? NaN);
+  const feeEntry = Array.isArray(root) ? root[0] : root;
+  const fee = Number(feeEntry?.fee ?? feeEntry?.amount?.fee ?? feeEntry?.total_fee ?? NaN);
   if (!Number.isFinite(fee) || fee < 0) {
-    throw new Error("Flutterwave collection fee was not returned");
+    console.error("Flutterwave collection fee response missing fee value", {
+      endpoint: "/fees",
+      status: response.status,
+      body: data,
+    });
+    throw new FlutterwaveFeeError("Flutterwave collection fee was not returned", response.status);
   }
 
   return Number(fee.toFixed(2));
@@ -197,6 +232,20 @@ Deno.serve(async (req: Request) => {
         error: "Quote can only be created for draft or quoted plans",
         error_code: "INVALID_PLAN_STATUS",
       }, 400);
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("kyc_status, flutterwave_sender_id")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profile?.kyc_status !== "verified" || !profile?.flutterwave_sender_id) {
+      return jsonResponse({
+        success: false,
+        error: "Complete account setup and wait for sender verification before requesting a quote.",
+        error_code: "SENDER_NOT_READY",
+      }, 403);
     }
 
     const planPricingMode = plan.pricing_mode as "fixed_source" | "fixed_destination";
@@ -409,19 +458,36 @@ Deno.serve(async (req: Request) => {
     }
 
     const sourceAmount = Number(totalSourceAmount.toFixed(2));
+    const sendaFee = calculateSendaFee(sourceAmount);
+
+    // Fee lookup amount is the card charge before Flutterwave's own cost is known
+    // (source + Senda fee), so the lookup isn't circular against customer_pays.
+    const collectionLookupAmount = fromMinorUnits(
+      toMinorUnits(sourceAmount) + toMinorUnits(sendaFee),
+    );
+
     let collectionFee: number;
     try {
-      collectionFee = await fetchCollectionFee(accessToken, sourceAmount);
+      collectionFee = await fetchCollectionFee(accessToken, collectionLookupAmount);
     } catch (error) {
-      console.error("Failed to fetch Flutterwave collection fee:", error);
-      return jsonResponse({
-        success: false,
-        error: "Unable to obtain the Flutterwave collection fee for this quote.",
-        error_code: "COLLECTION_FEE_UNAVAILABLE",
-      }, 502);
+      if (error instanceof FlutterwaveFeeError && error.status === 501) {
+        // Sandbox does not implement fee lookup for this request; absorb the
+        // unknown provider cost into Senda rather than inventing a confirmed fee.
+        console.warn("Flutterwave /fees is not implemented in this environment; provider cost unknown and absorbed by Senda", {
+          endpoint: "/fees",
+          status: error.status,
+        });
+        collectionFee = 0;
+      } else {
+        console.error("Failed to fetch Flutterwave collection fee:", error);
+        return jsonResponse({
+          success: false,
+          error: "Unable to obtain the Flutterwave collection fee for this quote.",
+          error_code: "COLLECTION_FEE_UNAVAILABLE",
+        }, 502);
+      }
     }
 
-    const sendaFee = calculateSendaFee(sourceAmount);
     const sendaFxMargin = 0;
     const processingFee = fromMinorUnits(
       toMinorUnits(collectionFee) + toMinorUnits(sendaFee),

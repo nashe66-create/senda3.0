@@ -53,8 +53,7 @@ import {
   getRecurringLabel,
   createQuote,
   lockQuote,
-  releasePayouts,
-  confirmPayouts,
+  sendMoney,
   retryPayout,
   requestPayoutResolution,
   cancelOrder,
@@ -70,6 +69,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { canStartAccountSetup, isAccountSetupComplete } from '@/lib/account';
 import { ShieldAlert } from 'lucide-react-native';
+import { supabase } from '@/lib/supabase';
 
 const methodIcons: Record<ReceivingMethod, typeof Smartphone> = {
   mobile_money: Smartphone,
@@ -77,6 +77,16 @@ const methodIcons: Record<ReceivingMethod, typeof Smartphone> = {
   cash_pickup: Wallet,
   bill_payment: Receipt,
 };
+
+// Maps a raw provider/commitment status into a short customer-facing label.
+// Never reports "Completed" unless the provider-authoritative status confirms it.
+function payoutStatusLabel(status: string): string {
+  const upper = status.toUpperCase();
+  if (upper === 'COMPLETED' || upper === 'SUCCESSFUL') return 'Completed';
+  if (upper === 'FAILED') return 'Failed';
+  if (upper === 'RECONCILIATION_REQUIRED' || upper === 'CONFIRMING_UNKNOWN' || upper === 'CREATING_UNKNOWN') return 'Needs review';
+  return 'Processing';
+}
 
 export default function PlanDetailScreen() {
   const { id, created_recipient_id } = useLocalSearchParams<{
@@ -86,6 +96,7 @@ export default function PlanDetailScreen() {
   const { profile } = useAuth();
   const [plan, setPlan] = useState<PlanWithCommitments | null>(null);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [paymentTransactionId, setPaymentTransactionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddCommitment, setShowAddCommitment] = useState(false);
@@ -103,14 +114,11 @@ export default function PlanDetailScreen() {
   const [locking, setLocking] = useState(false);
 
   // Payout state
-  const [releasingPayouts, setReleasingPayouts] = useState(false);
-  const [confirmingPayouts, setConfirmingPayouts] = useState(false);
+  const [sendingMoney, setSendingMoney] = useState(false);
   const [payoutResult, setPayoutResult] = useState<{
     total?: number;
-    submitted?: number;
-    confirmed?: number;
-    failed?: number;
     errors?: string[];
+    payouts?: Array<{ commitment_id: string; status: string; error?: string | null }>;
   } | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
 
@@ -122,12 +130,21 @@ export default function PlanDetailScreen() {
   const loadPlan = useCallback(async () => {
     if (!id) return;
     try {
-      const [planData, recipData] = await Promise.all([
+      const [planData, recipData, transactionData] = await Promise.all([
         fetchPlanWithCommitments(id),
         fetchRecipients(),
+        supabase
+          .from('transactions')
+          .select('id')
+          .eq('plan_id', id)
+          .in('status', ['pending', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
       ]);
       setPlan(planData);
       setRecipients(recipData);
+      setPaymentTransactionId(transactionData.data?.id ?? null);
     } catch (e) {
       console.error('Failed to load plan:', e);
     } finally {
@@ -372,24 +389,15 @@ export default function PlanDetailScreen() {
         return;
       }
 
-      await createTransaction(id, Number(quote.customer_pays));
+      const transaction = await createTransaction(id, Number(quote.customer_pays));
 
       setShowQuoteModal(false);
       setQuote(null);
       setQuoteCountdown(null);
       await loadPlan();
 
-      const { data: txn } = await (await import('@/lib/supabase')).supabase
-        .from('transactions')
-        .select('id')
-        .eq('plan_id', id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (txn) {
-        router.push(`/collect/${txn.id}`);
-      }
+      setPaymentTransactionId(transaction.id);
+      router.push(`/collect/${transaction.id}`);
     } catch (e: any) {
       setQuoteError(e.message || 'Failed to start payment');
     } finally {
@@ -397,51 +405,36 @@ export default function PlanDetailScreen() {
     }
   };
 
-  // =======================================================
-  // RELEASE PAYOUTS
-  // =======================================================
-
-  const handleReleasePayouts = async () => {
-    if (!plan) return;
-    setReleasingPayouts(true);
-    setPayoutResult(null);
-    try {
-      const result = await releasePayouts(id);
-      setPayoutResult({
-        total: result.total,
-        submitted: result.submitted,
-        failed: result.failed,
-        errors: result.errors,
-      });
-      await loadPlan();
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to release payouts');
-    } finally {
-      setReleasingPayouts(false);
+  const handleResumePayment = () => {
+    if (paymentTransactionId) {
+      router.push(`/collect/${paymentTransactionId}`);
     }
   };
 
   // =======================================================
-  // CONFIRM PAYOUTS
+  // SEND MONEY — combines release + confirm into one customer action
   // =======================================================
 
-  const handleConfirmPayouts = async () => {
-    if (!plan) return;
-    setConfirmingPayouts(true);
+  const handleSendMoney = async () => {
+    if (!plan || sendingMoney) return;
+    setSendingMoney(true);
     setPayoutResult(null);
     try {
-      const result = await confirmPayouts(id);
+      const result = await sendMoney(id);
+      if (!result.success) {
+        Alert.alert('Error', result.error || 'Failed to send money');
+        return;
+      }
       setPayoutResult({
         total: result.total,
-        confirmed: result.confirmed,
-        failed: result.failed,
         errors: result.errors,
+        payouts: result.payouts,
       });
       await loadPlan();
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to confirm payouts');
+      Alert.alert('Error', e.message || 'Failed to send money');
     } finally {
-      setConfirmingPayouts(false);
+      setSendingMoney(false);
     }
   };
 
@@ -547,6 +540,11 @@ export default function PlanDetailScreen() {
 
   const cancellableStates = ['draft', 'quoted', 'awaiting_payment', 'funded'];
   const canCancel = cancellableStates.includes(plan.status);
+  const quoteExpired = Boolean(
+    plan.status === 'quoted' &&
+    plan.quote_expires_at &&
+    new Date(plan.quote_expires_at).getTime() <= Date.now()
+  );
 
   // Filter recipients to same corridor
   const eligibleRecipients = recipients.filter((r) => {
@@ -874,17 +872,16 @@ export default function PlanDetailScreen() {
 
         {payoutResult && (
           <View style={styles.sendResultCard}>
-            <Text style={styles.sendResultTitle}>Payout Results</Text>
-            {payoutResult.submitted !== undefined && (
-              <Text style={styles.sendResultText}>
-                {payoutResult.submitted} submitted, {payoutResult.failed} failed
-              </Text>
-            )}
-            {payoutResult.confirmed !== undefined && (
-              <Text style={styles.sendResultText}>
-                {payoutResult.confirmed} confirmed, {payoutResult.failed} failed
-              </Text>
-            )}
+            <Text style={styles.sendResultTitle}>Your payouts are being processed</Text>
+            {payoutResult.payouts?.map((p) => {
+              const commitment = plan.commitments.find((c) => c.id === p.commitment_id);
+              const name = commitment?.recipient?.name ?? 'Recipient';
+              return (
+                <Text key={p.commitment_id} style={styles.sendResultText}>
+                  {name} — {payoutStatusLabel(p.status)}
+                </Text>
+              );
+            })}
             {payoutResult.errors?.map((err, i) => (
               <Text key={i} style={styles.sendResultError}>{err}</Text>
             ))}
@@ -912,45 +909,75 @@ export default function PlanDetailScreen() {
           </Button>
         )}
 
+        {quoteExpired && plan.commitments.length > 0 && (
+          <Button onPress={handleGetQuote} style={styles.confirmBtn}>
+            <RefreshCw color="#fff" size={20} strokeWidth={2} />
+            {'  '}Refresh expired quote
+          </Button>
+        )}
+
         {plan.status === 'awaiting_payment' && (
           <View style={styles.statusInfoBox}>
             <Clock color={Colors.warning[600]} size={20} strokeWidth={2} />
-            <Text style={styles.statusInfoText}>
-              Payment is awaiting processing. Complete your payment to fund this order.
-            </Text>
+            <View style={styles.statusInfoContent}>
+              <Text style={styles.statusInfoText}>
+                Payment is awaiting processing. Complete your payment to fund this order.
+              </Text>
+              {paymentTransactionId && (
+                <Button onPress={handleResumePayment} style={styles.statusActionBtn}>
+                  Continue payment
+                </Button>
+              )}
+            </View>
           </View>
         )}
 
         {plan.status === 'payment_processing' && (
           <View style={styles.statusInfoBox}>
             <Clock color={Colors.primary[600]} size={20} strokeWidth={2} />
-            <Text style={styles.statusInfoText}>
-              Your payment is being processed. You will be able to release payouts once payment is verified.
-            </Text>
+            <View style={styles.statusInfoContent}>
+              <Text style={styles.statusInfoText}>
+                Your payment is being processed. You will be able to release payouts once payment is verified.
+              </Text>
+              {paymentTransactionId && (
+                <Button onPress={handleResumePayment} style={styles.statusActionBtn}>
+                  Continue payment
+                </Button>
+              )}
+            </View>
           </View>
         )}
 
         {plan.status === 'payment_failed' && (
           <View style={styles.statusInfoBox}>
             <XCircle color={Colors.error[600]} size={20} strokeWidth={2} />
-            <Text style={styles.statusInfoText}>
-              Your payment could not be verified. No payouts have been released. Please try again.
-            </Text>
+            <View style={styles.statusInfoContent}>
+              <Text style={styles.statusInfoText}>
+                Your payment could not be verified. No payouts have been released. Please try again.
+              </Text>
+              {paymentTransactionId && (
+                <Button onPress={handleResumePayment} style={styles.statusActionBtn}>
+                  Try payment again
+                </Button>
+              )}
+            </View>
           </View>
         )}
 
         {plan.status === 'funded' && (
-          <Button onPress={handleReleasePayouts} loading={releasingPayouts} style={styles.confirmBtn}>
+          <Button onPress={handleSendMoney} loading={sendingMoney} disabled={sendingMoney} style={styles.confirmBtn}>
             <Send color="#fff" size={20} strokeWidth={2} />
-            {'  '}Release Payouts
+            {'  '}Send Money
           </Button>
         )}
 
-        {plan.status === 'payouts_processing' && (
-          <Button onPress={handleConfirmPayouts} loading={confirmingPayouts} style={styles.sendBtn}>
-            <Send color="#fff" size={20} strokeWidth={2} />
-            {'  '}Confirm Payouts
-          </Button>
+        {plan.status === 'payouts_processing' && !payoutResult && (
+          <View style={styles.statusInfoBox}>
+            <Clock color={Colors.primary[600]} size={20} strokeWidth={2} />
+            <Text style={styles.statusInfoText}>
+              Your payouts are being processed. This can take a few minutes.
+            </Text>
+          </View>
         )}
 
         {plan.status === 'partially_failed' && (
@@ -1708,6 +1735,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.md,
   },
+  statusInfoContent: { flex: 1, gap: Spacing.sm },
+  statusActionBtn: { alignSelf: 'flex-start', marginTop: Spacing.xs },
   modalTitle: {
     ...Typography.h2,
     color: Colors.neutral[900],
