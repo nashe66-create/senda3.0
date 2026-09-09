@@ -14,7 +14,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Modal,
 } from 'react-native';
+
+import * as Contacts from 'expo-contacts';
 
 import {
   useLocalSearchParams,
@@ -30,6 +33,7 @@ import {
   Receipt,
   Trash2,
   RefreshCw,
+  UserPlus,
 } from 'lucide-react-native';
 
 import { Input } from '@/components/ui/Input';
@@ -161,19 +165,31 @@ export default function RecipientDetailScreen() {
     plan_id,
     destination_country,
     destination_currency,
+    return_to_new_plan,
+    transfer_name,
+    recurring,
+    next_run_date,
+    pricing_mode,
+    source_amount,
   } =
     useLocalSearchParams<{
       id: string;
       plan_id?: string;
       destination_country?: string;
       destination_currency?: string;
+      return_to_new_plan?: string;
+      transfer_name?: string;
+      recurring?: string;
+      next_run_date?: string;
+      pricing_mode?: string;
+      source_amount?: string;
     }>();
 
   const isNew =
     id === 'new';
 
   // Plan corridor lock only ever applies when creating a brand-new recipient
-  const fromPlan = isNew && !!plan_id;
+  const fromPlan = isNew && (!!plan_id || !!destination_country);
   const lockedCountry = fromPlan && destination_country ? destination_country : null;
   const lockedCurrency = fromPlan && destination_currency ? destination_currency : null;
 
@@ -349,6 +365,10 @@ export default function RecipientDetailScreen() {
   ] =
     useState(false);
 
+  const [contactPickerVisible, setContactPickerVisible] = useState(false);
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+
   const [
     loading,
     setLoading,
@@ -356,6 +376,50 @@ export default function RecipientDetailScreen() {
     useState(!isNew);
 
   const loadRequestRef = useRef(0);
+
+  const handleChooseContact = async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert(
+        'Contacts unavailable',
+        'Device contacts are available in the mobile app. You can enter the recipient details manually here.',
+      );
+      return;
+    }
+
+    setContactsLoading(true);
+    try {
+      const permission = await Contacts.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert(
+          'Contacts permission needed',
+          'Contacts permission is needed to choose someone from your phone.',
+          [{ text: 'Enter details manually', style: 'cancel' }],
+        );
+        return;
+      }
+
+      const result = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
+        sort: Contacts.SortTypes.FirstName,
+      });
+      setContacts((result.data ?? []).filter((contact: any) =>
+        contact.phoneNumbers?.some((entry: any) => entry.number)
+      ));
+      setContactPickerVisible(true);
+    } catch (e: any) {
+      Alert.alert('Contacts unavailable', e?.message ?? 'Could not load contacts.');
+    } finally {
+      setContactsLoading(false);
+    }
+  };
+
+  const handleContactSelected = (contact: any) => {
+    const contactName = String(contact.name ?? '').trim();
+    const contactPhone = contact.phoneNumbers?.find((entry: any) => entry.number)?.number ?? '';
+    if (contactName) setName(contactName);
+    if (contactPhone) setPhone(String(contactPhone));
+    setContactPickerVisible(false);
+  };
 
   /* =======================================================
      LOAD ALL DESTINATIONS
@@ -387,7 +451,7 @@ export default function RecipientDetailScreen() {
 
           setOptionsError(
             e?.message ||
-              'Unable to load payout destinations. Run corridor sync from Settings.'
+              'Unable to load available receiving options. Please try again later.'
           );
         } finally {
           setOptionsLoading(
@@ -1174,8 +1238,26 @@ export default function RecipientDetailScreen() {
           }
         }
 
-        if (isNew && fromPlan) {
-          router.setParams({ created_recipient_id: savedRecipient.id });
+        if (isNew && plan_id) {
+          router.replace(`/plan/${plan_id}?created_recipient_id=${encodeURIComponent(savedRecipient.id)}`);
+          return;
+        }
+
+        if (isNew && return_to_new_plan === 'true') {
+          router.replace({
+            pathname: '/plan/new',
+            params: {
+              destination_country,
+              destination_currency,
+              created_recipient_id: savedRecipient.id,
+              transfer_name,
+              recurring,
+              next_run_date,
+              pricing_mode,
+              source_amount,
+            },
+          });
+          return;
         }
 
         router.back();
@@ -1431,12 +1513,23 @@ export default function RecipientDetailScreen() {
                   styles.activePayoutWarningText
                 }
               >
-                This recipient has an active payout in progress. Any changes you make will apply to future transactions only, not the current in-flight payout.
+                This person has an active transfer in progress. Any changes you make will apply to future transfers only, not the current one.
               </Text>
             </View>
           )}
 
           {/* NAME */}
+
+          <TouchableOpacity
+            onPress={handleChooseContact}
+            disabled={contactsLoading}
+            style={styles.contactBtn}
+          >
+            <UserPlus color={Colors.primary[600]} size={18} strokeWidth={2} />
+            <Text style={styles.contactBtnText}>
+              {contactsLoading ? 'Loading contacts...' : 'Choose from Contacts'}
+            </Text>
+          </TouchableOpacity>
 
           <Input
             label="Recipient name"
@@ -1581,6 +1674,42 @@ export default function RecipientDetailScreen() {
                       </Text>
                     </TouchableOpacity>
                   );
+
+                  <Modal
+                    visible={contactPickerVisible}
+                    transparent
+                    animationType="slide"
+                    onRequestClose={() => setContactPickerVisible(false)}
+                  >
+                    <View style={styles.contactModalOverlay}>
+                      <View style={styles.contactModalContent}>
+                        <View style={styles.contactModalHeader}>
+                          <Text style={styles.contactModalTitle}>Choose a contact</Text>
+                          <TouchableOpacity onPress={() => setContactPickerVisible(false)}>
+                            <Text style={styles.contactModalClose}>Close</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <ScrollView>
+                          {contacts.length === 0 ? (
+                            <Text style={styles.contactEmptyText}>
+                              No contacts with phone numbers were found. Enter the details manually instead.
+                            </Text>
+                          ) : contacts.map((contact, index) => (
+                              <TouchableOpacity
+                                key={contact.id ?? `${contact.name}-${index}`}
+                                onPress={() => handleContactSelected(contact)}
+                                style={styles.contactRow}
+                              >
+                                <Text style={styles.contactName}>{contact.name || 'Unnamed contact'}</Text>
+                                <Text style={styles.contactPhone}>
+                                  {contact.phoneNumbers?.find((entry: any) => entry.number)?.number || 'No phone number'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  </Modal>
                 }
               )}
             </ScrollView>
@@ -2574,6 +2703,78 @@ const styles =
       ...Typography.bodyMedium,
       color:
         Colors.error[600],
+    },
+
+    contactBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: Colors.primary[200],
+      borderRadius: 12,
+      paddingVertical: 12,
+      marginBottom: Spacing.sm,
+    },
+
+    contactBtnText: {
+      ...Typography.bodyMedium,
+      color: Colors.primary[600],
+    },
+
+    contactModalOverlay: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: 'rgba(0,0,0,0.45)',
+    },
+
+    contactModalContent: {
+      maxHeight: '75%',
+      backgroundColor: '#fff',
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: Spacing.lg,
+    },
+
+    contactModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: Spacing.md,
+    },
+
+    contactModalTitle: {
+      ...Typography.h2,
+      color: Colors.neutral[900],
+    },
+
+    contactModalClose: {
+      ...Typography.bodyMedium,
+      color: Colors.primary[600],
+    },
+
+    contactRow: {
+      paddingVertical: Spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.neutral[100],
+    },
+
+    contactName: {
+      ...Typography.bodyMedium,
+      color: Colors.neutral[900],
+    },
+
+    contactPhone: {
+      ...Typography.small,
+      color: Colors.neutral[500],
+      marginTop: 2,
+    },
+
+    contactEmptyText: {
+      ...Typography.body,
+      color: Colors.neutral[500],
+      lineHeight: 21,
+      paddingVertical: Spacing.lg,
     },
 
     phoneRow: {

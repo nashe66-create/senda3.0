@@ -53,7 +53,8 @@ import {
   getRecurringLabel,
   createQuote,
   lockQuote,
-  sendMoney,
+  duplicatePlan,
+  startPayoutOrchestration,
   retryPayout,
   requestPayoutResolution,
   cancelOrder,
@@ -82,10 +83,69 @@ const methodIcons: Record<ReceivingMethod, typeof Smartphone> = {
 // Never reports "Completed" unless the provider-authoritative status confirms it.
 function payoutStatusLabel(status: string): string {
   const upper = status.toUpperCase();
-  if (upper === 'COMPLETED' || upper === 'SUCCESSFUL') return 'Completed';
-  if (upper === 'FAILED') return 'Failed';
-  if (upper === 'RECONCILIATION_REQUIRED' || upper === 'CONFIRMING_UNKNOWN' || upper === 'CREATING_UNKNOWN') return 'Needs review';
+  if (upper === 'COMPLETED' || upper === 'SUCCESSFUL') return 'Sent';
+  if (upper === 'FAILED') return 'Needs attention';
+  if (upper === 'RECONCILIATION_REQUIRED' || upper === 'CONFIRMING_UNKNOWN' || upper === 'CREATING_UNKNOWN') return "We're checking this transfer";
+  if (upper === 'RESOLUTION') return 'Needs attention';
   return 'Processing';
+}
+
+function customerFailureReason(reason: string | null | undefined): string {
+  const value = reason?.toLowerCase() ?? '';
+  if (value.includes('recipient') || value.includes('account')) {
+    return 'Recipient details need to be updated.';
+  }
+  if (value.includes('insufficient') && value.includes('balance')) {
+    return 'This transfer could not be completed right now. Please try again later.';
+  }
+  if (value.includes('network') || value.includes('timeout') || value.includes('unavailable')) {
+    return 'A temporary service issue prevented this transfer. Please try again.';
+  }
+  if (value.includes('compliance') || value.includes('verification') || value.includes('kyc')) {
+    return 'Additional verification is needed before this transfer can be completed.';
+  }
+  return 'This recipient transfer could not be completed. Please try again or contact support.';
+}
+
+function paymentStatusLabel(status: string): string {
+  const upper = status.toUpperCase();
+  if (upper === 'SUCCESSFUL') return 'Payment received';
+  if (upper === 'FAILED') return 'Needs attention';
+  if (upper === 'PROCESSING') return 'Processing';
+  return 'Awaiting payment';
+}
+
+function persistedQuoteFromPlan(plan: PlanWithCommitments): QuoteResult | null {
+  if (plan.status !== 'quoted' || !plan.quote_created_at || !plan.quote_expires_at || new Date(plan.quote_expires_at).getTime() <= Date.now()) return null;
+  const destinationCurrency = plan.destination_currency || plan.commitments[0]?.destination_currency || '';
+  const destinationCountry = plan.destination_country || plan.commitments[0]?.recipient?.country || '';
+  return {
+    success: true,
+    plan_id: plan.id,
+    pricing_mode: plan.pricing_mode,
+    source_currency: 'GBP',
+    destination_country: destinationCountry,
+    destination_currency: destinationCurrency,
+    source_amount: Number(plan.source_amount) || 0,
+    destination_amount: Number(plan.destination_amount) || 0,
+    customer_pays: Number(plan.customer_pays) || 0,
+    customer_fx_rate: Number(plan.customer_fx_rate) || 0,
+    provider_fx_rate: Number(plan.provider_fx_rate) || 0,
+    provider_fee: Number(plan.provider_fee) || 0,
+    senda_fee: Number(plan.senda_fee) || 0,
+    processing_fee: Number(plan.processing_fee) || 0,
+    senda_fx_margin: Number(plan.senda_fx_margin) || 0,
+    quote_created_at: plan.quote_created_at,
+    quote_expires_at: plan.quote_expires_at,
+    recipients: plan.commitments.map((commitment) => ({
+      commitment_id: commitment.id,
+      recipient_name: commitment.recipient?.name || 'Recipient',
+      source_amount: Number(commitment.amount_gbp) || 0,
+      destination_amount: Number(commitment.amount_destination) || 0,
+      fx_rate: Number(commitment.fx_rate) || Number(plan.customer_fx_rate) || 0,
+      payout_method: commitment.payout_method || 'mobile_money',
+    })),
+  };
 }
 
 export default function PlanDetailScreen() {
@@ -114,16 +174,18 @@ export default function PlanDetailScreen() {
   const [locking, setLocking] = useState(false);
 
   // Payout state
-  const [sendingMoney, setSendingMoney] = useState(false);
   const [payoutResult, setPayoutResult] = useState<{
     total?: number;
     errors?: string[];
     payouts?: Array<{ commitment_id: string; status: string; error?: string | null }>;
   } | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState(false);
 
   // Cancelling
   const [cancelling, setCancelling] = useState(false);
+  const [orchestrationError, setOrchestrationError] = useState<string | null>(null);
+  const orchestrationStartedRef = useRef(false);
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -143,6 +205,15 @@ export default function PlanDetailScreen() {
           .maybeSingle(),
       ]);
       setPlan(planData);
+      const restoredQuote = planData ? persistedQuoteFromPlan(planData) : null;
+      setQuote(restoredQuote);
+      setQuoteCountdown(
+        restoredQuote
+          ? Math.max(0, Math.floor((new Date(restoredQuote.quote_expires_at).getTime() - Date.now()) / 1000))
+          : planData?.status === 'quoted' && planData.quote_expires_at
+            ? 0
+            : null
+      );
       setRecipients(recipData);
       setPaymentTransactionId(transactionData.data?.id ?? null);
     } catch (e) {
@@ -170,6 +241,38 @@ export default function PlanDetailScreen() {
     }
   }, [created_recipient_id]);
 
+  const handleAutomaticPayoutStart = useCallback(async () => {
+    if (!id || orchestrationStartedRef.current) return;
+    orchestrationStartedRef.current = true;
+    setOrchestrationError(null);
+    try {
+      const result = await startPayoutOrchestration(id);
+      if (!result.success) {
+        setOrchestrationError(result.error || 'We could not start the recipient transfers yet.');
+        orchestrationStartedRef.current = false;
+        return;
+      }
+      await loadPlan();
+    } catch (error: any) {
+      setOrchestrationError(error?.message || 'We could not start the recipient transfers yet.');
+      orchestrationStartedRef.current = false;
+    }
+  }, [id, loadPlan]);
+
+  useEffect(() => {
+    if (plan?.status === 'funded') {
+      handleAutomaticPayoutStart();
+    }
+  }, [plan?.status, handleAutomaticPayoutStart]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (plan?.status === 'funded') {
+        handleAutomaticPayoutStart();
+      }
+    }, [plan?.status, handleAutomaticPayoutStart])
+  );
+
   // Quote countdown timer
   useEffect(() => {
     if (quote?.quote_expires_at && quote.success) {
@@ -192,6 +295,36 @@ export default function PlanDetailScreen() {
       };
     }
   }, [quote?.quote_expires_at, quote?.success]);
+
+  useEffect(() => {
+    if (!plan) return;
+    const activePlanStatuses = [
+      'awaiting_payment',
+      'payment_processing',
+      'funded',
+      'payouts_processing',
+      'payment_failed',
+      'partially_failed',
+      'failed',
+    ];
+    const hasPendingPayouts = plan.commitments.some((commitment) => [
+      'creating',
+      'creating_unknown',
+      'submitted',
+      'confirming',
+      'confirming_unknown',
+      'processing',
+      'reconciliation_required',
+      'resolution',
+    ].includes(commitment.status));
+    if (!activePlanStatuses.includes(plan.status) && !hasPendingPayouts) return;
+
+    const timer = setInterval(() => {
+      loadPlan();
+    }, 15000);
+
+    return () => clearInterval(timer);
+  }, [plan?.status, plan?.commitments, loadPlan]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -315,8 +448,17 @@ export default function PlanDetailScreen() {
     if (!plan || plan.commitments.length === 0) return;
     setShowQuoteModal(true);
     setQuoteError(null);
-    setQuote(null);
-    setQuoteCountdown(null);
+    const persistedQuote = persistedQuoteFromPlan(plan);
+    if (persistedQuote) {
+      setQuote(persistedQuote);
+    } else {
+      setQuote(null);
+      setQuoteCountdown(
+        plan.status === 'quoted' && plan.quote_expires_at && new Date(plan.quote_expires_at).getTime() <= Date.now()
+          ? 0
+          : null
+      );
+    }
   };
 
   const handleCreateQuote = async () => {
@@ -412,34 +554,7 @@ export default function PlanDetailScreen() {
   };
 
   // =======================================================
-  // SEND MONEY — combines release + confirm into one customer action
-  // =======================================================
-
-  const handleSendMoney = async () => {
-    if (!plan || sendingMoney) return;
-    setSendingMoney(true);
-    setPayoutResult(null);
-    try {
-      const result = await sendMoney(id);
-      if (!result.success) {
-        Alert.alert('Error', result.error || 'Failed to send money');
-        return;
-      }
-      setPayoutResult({
-        total: result.total,
-        errors: result.errors,
-        payouts: result.payouts,
-      });
-      await loadPlan();
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to send money');
-    } finally {
-      setSendingMoney(false);
-    }
-  };
-
-  // =======================================================
-  // RETRY FAILED PAYOUT
+  // RETRY FAILED RECIPIENT TRANSFER
   // =======================================================
 
   const handleRetryPayout = async (commitmentId: string, method: PayoutMethod) => {
@@ -447,21 +562,38 @@ export default function PlanDetailScreen() {
     try {
       const result = await retryPayout(commitmentId, method);
       if (!result.success) {
-        Alert.alert('Retry Failed', result.error || 'Could not retry this payout');
+        Alert.alert('Retry Failed', result.error || 'Could not retry this recipient transfer');
       } else {
         await loadPlan();
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to retry payout');
+      Alert.alert('Error', e.message || 'Failed to retry recipient transfer');
     } finally {
       setRetryingId(null);
+    }
+  };
+
+  const handleSendAgain = async () => {
+    if (!plan || duplicating) return;
+    setDuplicating(true);
+    try {
+      const result = await duplicatePlan(plan.id);
+      if (!result.success || !result.plan_id) {
+        Alert.alert('Unable to duplicate order', result.error || 'Please try again later.');
+        return;
+      }
+      router.push(`/plan/${result.plan_id}`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not duplicate this order');
+    } finally {
+      setDuplicating(false);
     }
   };
 
   const handleRequestResolution = async (commitmentId: string) => {
     setRetryingId(commitmentId);
     try {
-      const result = await requestPayoutResolution(commitmentId, 'Customer requested support review for a failed payout.');
+      const result = await requestPayoutResolution(commitmentId, 'Customer requested support review for a failed recipient transfer.');
       if (!result.success) {
         Alert.alert('Unable to request review', result.error ?? 'Please try again later.');
         return;
@@ -473,13 +605,13 @@ export default function PlanDetailScreen() {
   };
 
   // =======================================================
-  // CANCEL ORDER
+  // CANCEL TRANSFER
   // =======================================================
 
   const handleCancelOrder = () => {
     Alert.alert(
-      'Cancel Order',
-      'Are you sure you want to cancel this order? This cannot be undone.',
+      'Cancel transfer',
+      'Are you sure you want to cancel this transfer? This cannot be undone.',
       [
         { text: 'No', style: 'cancel' },
         {
@@ -490,12 +622,12 @@ export default function PlanDetailScreen() {
             try {
               const result = await cancelOrder(id);
               if (!result.success) {
-                Alert.alert('Cannot Cancel', result.error || 'This order cannot be cancelled');
+                Alert.alert('Cannot Cancel', result.error || 'This transfer cannot be cancelled');
               } else {
                 await loadPlan();
               }
             } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed to cancel order');
+              Alert.alert('Error', e.message || 'Failed to cancel transfer');
             } finally {
               setCancelling(false);
             }
@@ -507,8 +639,8 @@ export default function PlanDetailScreen() {
 
   const handleDeletePlan = () => {
     Alert.alert(
-      'Delete Plan',
-      'Are you sure you want to delete this plan? This cannot be undone.',
+      'Delete transfer',
+      'Are you sure you want to delete this transfer? This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -533,7 +665,7 @@ export default function PlanDetailScreen() {
             <ArrowLeft color={Colors.neutral[700]} size={24} strokeWidth={2} />
           </TouchableOpacity>
         </View>
-        <EmptyState icon="❌" title="Plan not found" subtitle="This plan may have been deleted" />
+        <EmptyState icon="❌" title="Transfer not found" subtitle="This transfer may have been deleted" />
       </View>
     );
   }
@@ -575,6 +707,7 @@ export default function PlanDetailScreen() {
           <View style={styles.planIconLarge}>
             <TrendingUp color="#fff" size={24} strokeWidth={2} />
           </View>
+          <Text style={styles.detailEyebrow}>Grouped transfer</Text>
           <Text style={styles.planName}>{plan.name}</Text>
           <View style={styles.planMetaRow}>
             <View style={styles.metaItem}>
@@ -600,7 +733,7 @@ export default function PlanDetailScreen() {
         <View style={styles.totalCard}>
           {plan.status !== 'draft' && plan.customer_pays > 0 ? (
             <>
-              <Text style={styles.totalLabel}>Customer Pays</Text>
+              <Text style={styles.totalLabel}>Total</Text>
               <Text style={styles.totalAmount}>{formatGBP(Number(plan.customer_pays))}</Text>
               {plan.destination_currency && plan.destination_amount > 0 && (
                 <Text style={styles.totalSubtext}>
@@ -609,7 +742,7 @@ export default function PlanDetailScreen() {
               )}
               {plan.customer_fx_rate > 0 && (
                 <Text style={styles.totalSubtext}>
-                  Rate: 1 GBP = {plan.customer_fx_rate} {plan.destination_currency || ''}
+                  Exchange rate: 1 GBP = {plan.customer_fx_rate} {plan.destination_currency || ''}
                 </Text>
               )}
             </>
@@ -643,22 +776,14 @@ export default function PlanDetailScreen() {
                   : `${destCurrency} 0`}
               </Text>
               <Text style={styles.totalSubtext}>
-                Final GBP cost calculated at quote time
+                Final amount to pay calculated at quote time
               </Text>
             </>
           )}
           {plan.payment_status && plan.payment_status !== 'pending' && (
             <View style={styles.paymentStatusRow}>
               <Text style={styles.paymentStatusLabel}>Payment: </Text>
-              <Text style={styles.paymentStatusValue}>{plan.payment_status}</Text>
-            </View>
-          )}
-          {plan.financial_reconciliation_status && plan.financial_reconciliation_status !== 'pending' && (
-            <View style={styles.paymentStatusRow}>
-              <Text style={styles.paymentStatusLabel}>Order review: </Text>
-              <Text style={styles.paymentStatusValue}>
-                {plan.financial_reconciliation_status === 'reconciled' ? 'Complete' : 'Needs review'}
-              </Text>
+              <Text style={styles.paymentStatusValue}>{paymentStatusLabel(plan.payment_status)}</Text>
             </View>
           )}
         </View>
@@ -668,14 +793,16 @@ export default function PlanDetailScreen() {
           <View style={styles.modeIndicator}>
             <Text style={styles.modeIndicatorText}>
               {isFixedSource
-                ? 'Budget mode — allocate your GBP budget between recipients'
-                : `Recipient needs mode — set what each person receives in ${destCurrency}`}
+                ? 'Choose the total amount you want to spend, then share it between people'
+                : `Choose what each person should receive in ${destCurrency}`}
             </Text>
           </View>
         )}
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recipients in this plan</Text>
+          <Text style={styles.sectionTitle}>
+            {canEdit ? 'People receiving this transfer' : 'Recipients and progress'}
+          </Text>
           {canEdit && plan.commitments.length < 5 && (
             <TouchableOpacity
               onPress={() => setShowAddCommitment(true)}
@@ -690,7 +817,7 @@ export default function PlanDetailScreen() {
         {plan.commitments.length === 0 ? (
           <Card style={styles.emptyCommitCard}>
             <Text style={styles.emptyCommitText}>
-              No recipients added yet. Add recipients to this plan to start bundling transfers.
+              Add people to combine their transfers into one payment.
             </Text>
             {canEdit && plan.commitments.length < 5 && (
               <Button
@@ -753,7 +880,7 @@ export default function PlanDetailScreen() {
                   {isFixedSource ? (
                     <>
                       <View>
-                        <Text style={styles.commitmentAmountLabel}>Allocation</Text>
+                        <Text style={styles.commitmentAmountLabel}>You send</Text>
                         <Text style={styles.commitmentAmountGbp}>
                           {formatGBP(Number(commitment.amount_gbp))}
                         </Text>
@@ -794,7 +921,7 @@ export default function PlanDetailScreen() {
                             <ChevronRight color={Colors.neutral[400]} size={16} strokeWidth={2} />
                           </View>
                           <View>
-                            <Text style={styles.commitmentAmountLabel}>Cost</Text>
+                            <Text style={styles.commitmentAmountLabel}>You send</Text>
                             <Text style={styles.commitmentAmountGbp}>
                               {formatGBP(Number(commitment.amount_gbp))}
                             </Text>
@@ -803,7 +930,7 @@ export default function PlanDetailScreen() {
                       )}
                       {!showGbp && (
                         <View>
-                          <Text style={styles.commitmentAmountLabel}>GBP cost</Text>
+                          <Text style={styles.commitmentAmountLabel}>You send</Text>
                           <Text style={styles.commitmentAmountDestPending}>
                             Calculated at quote
                           </Text>
@@ -827,10 +954,12 @@ export default function PlanDetailScreen() {
                   </View>
                 )}
 
-                {isFailed && commitment.failure_reason_display && (
+                {isFailed && (commitment.failure_reason_display || commitment.failure_reason) && (
                   <View style={styles.failureBox}>
                     <AlertCircle color={Colors.error[600]} size={16} strokeWidth={2} />
-                    <Text style={styles.failureText}>{commitment.failure_reason_display}</Text>
+                    <Text style={styles.failureText}>
+                      {customerFailureReason(commitment.failure_reason_display || commitment.failure_reason)}
+                    </Text>
                   </View>
                 )}
 
@@ -838,7 +967,9 @@ export default function PlanDetailScreen() {
                   <View style={styles.statusInfoBox}>
                     <AlertCircle color={Colors.warning[600]} size={16} strokeWidth={2} />
                     <Text style={styles.statusInfoText}>
-                      This payout needs review before it can be treated as complete. No duplicate payout will be created automatically.
+                      {commitment.status === 'resolution'
+                        ? 'This recipient transfer needs attention. Contact support if you need help.'
+                        : "We're checking this recipient transfer. No action is needed right now."}
                     </Text>
                   </View>
                 )}
@@ -852,7 +983,7 @@ export default function PlanDetailScreen() {
                         disabled={retryingId === commitment.id}
                       >
                         <RefreshCw color={Colors.primary[600]} size={14} strokeWidth={2} />
-                        <Text style={styles.retryBtnText}>Retry payout</Text>
+                        <Text style={styles.retryBtnText}>Retry transfer</Text>
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
@@ -872,7 +1003,7 @@ export default function PlanDetailScreen() {
 
         {payoutResult && (
           <View style={styles.sendResultCard}>
-            <Text style={styles.sendResultTitle}>Your payouts are being processed</Text>
+            <Text style={styles.sendResultTitle}>Your money is on its way</Text>
             {payoutResult.payouts?.map((p) => {
               const commitment = plan.commitments.find((c) => c.id === p.commitment_id);
               const name = commitment?.recipient?.name ?? 'Recipient';
@@ -885,6 +1016,13 @@ export default function PlanDetailScreen() {
             {payoutResult.errors?.map((err, i) => (
               <Text key={i} style={styles.sendResultError}>{err}</Text>
             ))}
+          </View>
+        )}
+
+        {orchestrationError && plan.status === 'funded' && (
+          <View style={styles.statusInfoBox}>
+            <AlertCircle color={Colors.warning[600]} size={20} strokeWidth={2} />
+            <Text style={styles.statusInfoText}>{orchestrationError} We will keep trying when this transfer is reopened.</Text>
           </View>
         )}
 
@@ -901,11 +1039,11 @@ export default function PlanDetailScreen() {
           </TouchableOpacity>
         )}
 
-        {/* DRAFT: Get Quote button */}
+        {/* DRAFT: Review transfer button */}
         {canEdit && plan.commitments.length > 0 && (
           <Button onPress={handleGetQuote} style={styles.confirmBtn}>
             <CheckCircle2 color="#fff" size={20} strokeWidth={2} />
-            {'  '}Get Quote
+            {'  '}Review transfer
           </Button>
         )}
 
@@ -916,12 +1054,19 @@ export default function PlanDetailScreen() {
           </Button>
         )}
 
+        {plan.status === 'quoted' && !quoteExpired && plan.commitments.length > 0 && (
+          <Button onPress={handleGetQuote} style={styles.confirmBtn}>
+            <CheckCircle2 color="#fff" size={20} strokeWidth={2} />
+            {'  '}Review active quote
+          </Button>
+        )}
+
         {plan.status === 'awaiting_payment' && (
           <View style={styles.statusInfoBox}>
             <Clock color={Colors.warning[600]} size={20} strokeWidth={2} />
             <View style={styles.statusInfoContent}>
               <Text style={styles.statusInfoText}>
-                Payment is awaiting processing. Complete your payment to fund this order.
+                Complete your payment to send money to everyone in this transfer.
               </Text>
               {paymentTransactionId && (
                 <Button onPress={handleResumePayment} style={styles.statusActionBtn}>
@@ -937,7 +1082,7 @@ export default function PlanDetailScreen() {
             <Clock color={Colors.primary[600]} size={20} strokeWidth={2} />
             <View style={styles.statusInfoContent}>
               <Text style={styles.statusInfoText}>
-                Your payment is being processed. You will be able to release payouts once payment is verified.
+                Your payment is being verified. We will start sending the money once it is confirmed.
               </Text>
               {paymentTransactionId && (
                 <Button onPress={handleResumePayment} style={styles.statusActionBtn}>
@@ -953,7 +1098,7 @@ export default function PlanDetailScreen() {
             <XCircle color={Colors.error[600]} size={20} strokeWidth={2} />
             <View style={styles.statusInfoContent}>
               <Text style={styles.statusInfoText}>
-                Your payment could not be verified. No payouts have been released. Please try again.
+                Your payment could not be verified. The money has not been sent. Please try again.
               </Text>
               {paymentTransactionId && (
                 <Button onPress={handleResumePayment} style={styles.statusActionBtn}>
@@ -964,10 +1109,17 @@ export default function PlanDetailScreen() {
           </View>
         )}
 
-        {plan.status === 'funded' && (
-          <Button onPress={handleSendMoney} loading={sendingMoney} disabled={sendingMoney} style={styles.confirmBtn}>
-            <Send color="#fff" size={20} strokeWidth={2} />
-            {'  '}Send Money
+        {plan.status === 'funded' && !orchestrationError && (
+          <View style={styles.statusInfoBox}>
+            <Clock color={Colors.primary[600]} size={20} strokeWidth={2} />
+            <Text style={styles.statusInfoText}>Payment received. Senda is starting the transfers to each person.</Text>
+          </View>
+        )}
+
+        {['completed', 'failed', 'partially_failed', 'cancelled'].includes(plan.status) && (
+          <Button onPress={handleSendAgain} loading={duplicating} disabled={duplicating} style={styles.confirmBtn}>
+            <Repeat color="#fff" size={18} strokeWidth={2} />
+            {'  '}Send Again
           </Button>
         )}
 
@@ -975,16 +1127,16 @@ export default function PlanDetailScreen() {
           <View style={styles.statusInfoBox}>
             <Clock color={Colors.primary[600]} size={20} strokeWidth={2} />
             <Text style={styles.statusInfoText}>
-              Your payouts are being processed. This can take a few minutes.
+              Your transfers are being processed. This can take a few minutes.
             </Text>
           </View>
         )}
 
         {plan.status === 'partially_failed' && (
           <View style={styles.partialFailBox}>
-            <Text style={styles.partialFailTitle}>Some payouts could not be completed</Text>
+            <Text style={styles.partialFailTitle}>Some transfers need attention</Text>
             <Text style={styles.partialFailText}>
-              You can retry failed payouts, or contact Senda support for a refund.
+              You can retry the affected transfer, or contact Senda support for help.
             </Text>
           </View>
         )}
@@ -996,14 +1148,14 @@ export default function PlanDetailScreen() {
             disabled={cancelling}
           >
             <XCircle color={Colors.error[500]} size={16} strokeWidth={2} />
-            <Text style={styles.deletePlanText}>{cancelling ? 'Cancelling...' : 'Cancel Order'}</Text>
+            <Text style={styles.deletePlanText}>{cancelling ? 'Cancelling...' : 'Cancel transfer'}</Text>
           </TouchableOpacity>
         )}
 
         {canEdit && (
           <TouchableOpacity onPress={handleDeletePlan} style={styles.deletePlanBtn}>
             <Trash2 color={Colors.error[500]} size={16} strokeWidth={2} />
-            <Text style={styles.deletePlanText}>Delete Plan</Text>
+            <Text style={styles.deletePlanText}>Delete transfer</Text>
           </TouchableOpacity>
         )}
 
@@ -1022,7 +1174,7 @@ export default function PlanDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Get Quote</Text>
+              <Text style={styles.modalTitle}>Review your transfer</Text>
               <TouchableOpacity
                 onPress={() => {
                   setShowQuoteModal(false);
@@ -1078,7 +1230,7 @@ export default function PlanDetailScreen() {
                     loading={quoteLoading}
                     style={styles.modalAddBtn}
                   >
-                    Get Quote
+                    Review exchange rate
                   </Button>
                 </>
               )}
@@ -1087,7 +1239,7 @@ export default function PlanDetailScreen() {
               {quote?.success && (
                 <View style={styles.quoteDisplay}>
                   <View style={styles.quoteHeader}>
-                    <Text style={styles.quoteTitle}>Your Quote</Text>
+                    <Text style={styles.quoteTitle}>Your transfer quote</Text>
                     {quoteCountdown !== null && (
                       <View style={[
                         styles.countdownBadge,
@@ -1100,7 +1252,7 @@ export default function PlanDetailScreen() {
                   </View>
 
                   <View style={styles.quoteRow}>
-                    <Text style={styles.quoteLabel}>Amount being sent</Text>
+                    <Text style={styles.quoteLabel}>You send</Text>
                     <Text style={styles.quoteValue}>{formatGBP(Number(quote.source_amount))}</Text>
                   </View>
                   <View style={styles.quoteRow}>
@@ -1114,7 +1266,7 @@ export default function PlanDetailScreen() {
                     <Text style={styles.quoteValueSmall}>{formatGBP(Number(quote.processing_fee))}</Text>
                   </View>
                   <View style={styles.quoteRow}>
-                    <Text style={styles.quoteLabel}>Total paid</Text>
+                    <Text style={styles.quoteLabel}>Total</Text>
                     <Text style={styles.quoteValue}>{formatGBP(Number(quote.customer_pays))}</Text>
                   </View>
 
@@ -1152,7 +1304,7 @@ export default function PlanDetailScreen() {
                       style={styles.modalAddBtn}
                     >
                       <Send color="#fff" size={18} strokeWidth={2} />
-                      {'  '}Lock & Pay {formatGBP(Number(quote.customer_pays))}
+                      {'  '}Continue to payment
                     </Button>
                   ) : (
                     <Button
@@ -1184,7 +1336,7 @@ export default function PlanDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Recipient to Plan</Text>
+              <Text style={styles.modalTitle}>Add person to transfer</Text>
               <TouchableOpacity
                 onPress={() => {
                   setShowAddCommitment(false);
@@ -1371,6 +1523,13 @@ const styles = StyleSheet.create({
     ...Typography.h2,
     color: Colors.neutral[900],
     textAlign: 'center',
+  },
+  detailEyebrow: {
+    ...Typography.caption,
+    color: Colors.primary[700],
+    fontFamily: 'Inter-SemiBold',
+    textTransform: 'uppercase',
+    marginBottom: 2,
   },
   planMetaRow: {
     flexDirection: 'row',

@@ -399,6 +399,8 @@ Deno.serve(async (req: Request) => {
       // A successful provider sender response is the authoritative acceptance signal
       // for this flow. Identity document fields remain unused for the MVP.
       const updateData: Record<string, unknown> = {
+        full_name: `${String(name.first).trim()} ${name.middle ? `${String(name.middle).trim()} ` : ""}${String(name.last).trim()}`.trim(),
+        phone: phoneNumber,
         kyc_date_of_birth: date_of_birth ?? null,
         kyc_address: flwAddress,
         kyc_submitted_at: new Date().toISOString(),

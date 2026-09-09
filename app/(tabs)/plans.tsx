@@ -16,7 +16,7 @@ import { Loading } from '@/components/ui/Loading';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
 import { Colors, Spacing, Typography } from '@/lib/theme';
-import { fetchPlans, formatGBP, formatDate, getRecurringLabel } from '@/lib/data';
+import { fetchPlans, formatCurrency, formatGBP, formatDate, getRecurringLabel } from '@/lib/data';
 import { Plan } from '@/types/database';
 
 export default function PlansScreen() {
@@ -81,8 +81,16 @@ export default function PlansScreen() {
 
         <View style={styles.planFooter}>
           <View>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalAmount}>{formatGBP(Number(item.total_gbp))}</Text>
+            <Text style={styles.totalLabel}>
+              {item.pricing_mode === 'fixed_destination' && Number(item.customer_pays) <= 0 ? 'Destination total' : 'Total'}
+            </Text>
+            <Text style={styles.totalAmount}>
+              {item.pricing_mode === 'fixed_destination' && Number(item.customer_pays) <= 0
+                ? item.destination_amount > 0
+                  ? formatCurrency(Number(item.destination_amount), item.destination_currency || '')
+                  : 'GBP total calculated at quote'
+                : formatGBP(Number(item.customer_pays || item.total_gbp))}
+            </Text>
           </View>
           <View style={styles.chevron}>
             <ChevronRight color={Colors.neutral[400]} size={20} strokeWidth={2} />
@@ -97,23 +105,23 @@ export default function PlansScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Remittance Plans</Text>
+        <Text style={styles.title}>Grouped Transfers</Text>
         <Text style={styles.subtitle}>
-          Bundle multiple transfers into one payment
+          Send to multiple people with one payment
         </Text>
       </View>
 
       {plans.length === 0 ? (
         <EmptyState
           icon="📋"
-          title="No plans yet"
-          subtitle="Create your first remittance plan to send to multiple recipients with a single payment"
+            title="No grouped transfers yet"
+          subtitle="Set up your first grouped transfer and send to multiple people with one payment"
         >
           <Button
             onPress={() => router.push('/plan/new')}
             style={styles.emptyBtn}
           >
-            <Plus color="#fff" size={18} strokeWidth={2} /> Create Plan
+            <Plus color="#fff" size={18} strokeWidth={2} /> Start a transfer
           </Button>
         </EmptyState>
       ) : (
@@ -124,7 +132,7 @@ export default function PlansScreen() {
             activeOpacity={0.8}
           >
             <Plus color={Colors.primary[600]} size={20} strokeWidth={2} />
-            <Text style={styles.createBtnText}>New Plan</Text>
+            <Text style={styles.createBtnText}>Start a transfer</Text>
           </TouchableOpacity>
 
           <FlatList

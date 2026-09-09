@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Loading } from '@/components/ui/Loading';
 import { Colors, Spacing, Typography } from '@/lib/theme';
-import { collectCard, authorizeCharge, verifyCharge } from '@/lib/data';
+import { collectCard, authorizeCharge, verifyCharge, startPayoutOrchestration, formatGBP } from '@/lib/data';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function CollectScreen() {
@@ -23,7 +23,9 @@ export default function CollectScreen() {
   const { profile } = useAuth();
 
   const [planId, setPlanId] = useState<string | null>(null);
+  const [sendAmount, setSendAmount] = useState(0);
   const [amount, setAmount] = useState(0);
+  const [processingFee, setProcessingFee] = useState(0);
   const [paymentReference, setPaymentReference] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -68,7 +70,9 @@ export default function CollectScreen() {
         }
 
         setPlanId(data.plan_id);
+        setSendAmount(Number(data.plan?.total_gbp) || 0);
         setAmount(Number(data.amount_gbp));
+        setProcessingFee(Number(data.plan?.processing_fee) || 0);
         setPaymentReference(data.payment_reference);
 
         if (data.next_action_type === 'requires_otp') {
@@ -77,6 +81,8 @@ export default function CollectScreen() {
         } else if (data.next_action_type === 'requires_pin') {
           setChargeStatus('requires_pin');
           setShowPinModal(true);
+        } else if (data.next_action_type === 'requires_additional_fields') {
+          setChargeStatus('requires_additional_fields');
         } else if (data.status === 'successful') {
           setChargeStatus('succeeded');
         } else if (data.status === 'failed') {
@@ -89,6 +95,17 @@ export default function CollectScreen() {
       }
     })();
   }, [transactionId]);
+
+  const verifyAndStartPayouts = async () => {
+    const verifyResult = await verifyCharge(transactionId);
+    if (verifyResult.verified && planId) {
+      const payoutResult = await startPayoutOrchestration(planId);
+      if (!payoutResult.success) {
+        console.error('Automatic payout orchestration did not start:', payoutResult.error);
+      }
+    }
+    return verifyResult;
+  };
 
   const handlePay = async () => {
     if (!paymentReference) {
@@ -126,7 +143,7 @@ export default function CollectScreen() {
       }
 
       if (result.status === 'succeeded') {
-        const verifyResult = await verifyCharge(transactionId);
+        const verifyResult = await verifyAndStartPayouts();
         if (verifyResult.verified) {
           setChargeStatus('succeeded');
         } else {
@@ -144,15 +161,62 @@ export default function CollectScreen() {
         setChargeStatus('requires_pin');
         setNextAction(result.next_action);
         setShowPinModal(true);
+      } else if (result.next_action?.type === 'requires_additional_fields') {
+        setChargeStatus('requires_additional_fields');
       } else if (result.next_action?.type === 'redirect_url') {
         setChargeStatus('redirect');
         setError('Redirect-based 3DS authentication is not yet supported in this build.');
       } else {
-        const verifyResult = await verifyCharge(transactionId);
+        const verifyResult = await verifyAndStartPayouts();
         setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
       }
     } catch (e: any) {
       setError(e?.message ?? 'Payment failed');
+      setChargeStatus('failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleAdditionalFieldsSubmit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await authorizeCharge({
+        transaction_id: transactionId,
+        type: 'address',
+        address: {
+          line1: billingLine1.trim(),
+          city: billingCity.trim(),
+          state: billingCounty.trim(),
+          postal_code: billingPostalCode.trim(),
+          country: 'GB',
+        },
+      });
+
+      if (!result.success) {
+        setError(result.error ?? 'We could not verify the billing details');
+        setChargeStatus('failed');
+        return;
+      }
+
+      if (result.status === 'succeeded') {
+        const verifyResult = await verifyAndStartPayouts();
+        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        if (!verifyResult.verified) setError('Payment could not be verified');
+      } else if (result.next_action?.type === 'requires_otp') {
+        setChargeStatus('requires_otp');
+        setShowOtpModal(true);
+      } else if (result.next_action?.type === 'requires_pin') {
+        setChargeStatus('requires_pin');
+        setShowPinModal(true);
+      } else {
+        const verifyResult = await verifyAndStartPayouts();
+        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        if (!verifyResult.verified) setError('Payment could not be verified');
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'We could not verify the billing details');
       setChargeStatus('failed');
     } finally {
       setSubmitting(false);
@@ -178,13 +242,13 @@ export default function CollectScreen() {
       }
 
       if (result.status === 'succeeded') {
-        const verifyResult = await verifyCharge(transactionId);
+        const verifyResult = await verifyAndStartPayouts();
         setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
       } else if (result.next_action?.type === 'requires_pin') {
         setChargeStatus('requires_pin');
         setShowPinModal(true);
       } else {
-        const verifyResult = await verifyCharge(transactionId);
+        const verifyResult = await verifyAndStartPayouts();
         setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
       }
     } catch (e: any) {
@@ -215,13 +279,13 @@ export default function CollectScreen() {
       }
 
       if (result.status === 'succeeded') {
-        const verifyResult = await verifyCharge(transactionId);
+        const verifyResult = await verifyAndStartPayouts();
         setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
       } else if (result.next_action?.type === 'requires_otp') {
         setChargeStatus('requires_otp');
         setShowOtpModal(true);
       } else {
-        const verifyResult = await verifyCharge(transactionId);
+        const verifyResult = await verifyAndStartPayouts();
         setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
       }
     } catch (e: any) {
@@ -240,16 +304,16 @@ export default function CollectScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <ArrowLeft color={Colors.neutral[700]} size={24} strokeWidth={2} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Add Funds</Text>
+        <Text style={styles.headerTitle}>Pay for your transfer</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {chargeStatus === 'succeeded' ? (
           <View style={styles.resultContainer}>
             <CheckCircle2 color={Colors.success[500]} size={64} strokeWidth={1.5} />
-            <Text style={styles.resultTitle}>Payment Successful</Text>
-            <Text style={styles.resultDesc}>Your card has been charged successfully. You can now send transfers.</Text>
-            <Button onPress={() => router.replace('/(tabs)')} style={styles.actionBtn}>
+            <Text style={styles.resultTitle}>Payment received</Text>
+            <Text style={styles.resultDesc}>Your payment was received. Senda is now sending the money to each recipient.</Text>
+            <Button onPress={() => router.replace(planId ? `/plan/${planId}` : '/(tabs)')} style={styles.actionBtn}>
               <Text style={styles.btnText}>Done</Text>
             </Button>
           </View>
@@ -265,8 +329,18 @@ export default function CollectScreen() {
         ) : (
           <View style={styles.form}>
             <View style={styles.amountCard}>
-              <Text style={styles.amountLabel}>Amount to add</Text>
-              <Text style={styles.amountValue}>£{amount.toFixed(2)}</Text>
+              <View style={styles.amountRow}>
+                <Text style={styles.amountLabel}>You send</Text>
+                <Text style={styles.amountRowValue}>{formatGBP(sendAmount)}</Text>
+              </View>
+              <View style={styles.amountRow}>
+                <Text style={styles.amountLabel}>Processing Fee</Text>
+                <Text style={styles.amountRowValue}>{formatGBP(processingFee)}</Text>
+              </View>
+              <View style={[styles.amountRow, styles.amountTotalRow]}>
+                <Text style={styles.amountTotalLabel}>Total</Text>
+                <Text style={styles.amountValue}>{formatGBP(amount)}</Text>
+              </View>
             </View>
 
             {error && (
@@ -277,7 +351,7 @@ export default function CollectScreen() {
 
             <View style={styles.sectionLabel}>
               <CreditCard color={Colors.neutral[600]} size={18} strokeWidth={2} />
-              <Text style={styles.sectionLabelText}>Card Details</Text>
+              <Text style={styles.sectionLabelText}>Payment method</Text>
             </View>
 
             <Input label="Card number" value={cardNumber} onChangeText={(v) => setCardNumber(v.replace(/[^0-9]/g, ''))} placeholder="4242 4242 4242 4242" keyboardType="numeric" />
@@ -311,12 +385,20 @@ export default function CollectScreen() {
 
             <View style={styles.securityNote}>
               <Lock color={Colors.neutral[400]} size={14} strokeWidth={2} />
-              <Text style={styles.securityText}>Card details are encrypted with AES-256-GCM before being sent to Flutterwave. We never store your card information.</Text>
+              <Text style={styles.securityText}>Your card details are encrypted and never stored by Senda.</Text>
             </View>
 
-            <Button onPress={handlePay} style={styles.actionBtn} disabled={submitting || chargeStatus === 'processing'}>
+            <Button
+              onPress={chargeStatus === 'requires_additional_fields' ? handleAdditionalFieldsSubmit : handlePay}
+              style={styles.actionBtn}
+              disabled={submitting || chargeStatus === 'processing'}
+            >
               <Text style={styles.btnText}>
-                {submitting || chargeStatus === 'processing' ? 'Processing...' : `Pay £${amount.toFixed(2)}`}
+                {submitting || chargeStatus === 'processing'
+                  ? 'Processing...'
+                  : chargeStatus === 'requires_additional_fields'
+                  ? 'Continue payment'
+                  : `Pay £${amount.toFixed(2)}`}
               </Text>
             </Button>
           </View>
@@ -371,8 +453,12 @@ const styles = StyleSheet.create({
   headerTitle: { ...Typography.h2, color: Colors.neutral[900] },
   scrollContent: { padding: Spacing.md, paddingBottom: Spacing.xxl },
   form: { gap: Spacing.sm },
-  amountCard: { backgroundColor: Colors.primary[600], borderRadius: 16, padding: Spacing.lg, alignItems: 'center', marginBottom: Spacing.lg },
-  amountLabel: { ...Typography.body, color: Colors.primary[50], marginBottom: 4 },
+  amountCard: { backgroundColor: Colors.primary[600], borderRadius: 16, padding: Spacing.lg, marginBottom: Spacing.lg },
+  amountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
+  amountTotalRow: { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.25)', marginTop: Spacing.sm, paddingTop: Spacing.md },
+  amountLabel: { ...Typography.body, color: Colors.primary[50] },
+  amountRowValue: { ...Typography.bodyMedium, color: '#fff' },
+  amountTotalLabel: { ...Typography.bodyMedium, color: '#fff' },
   amountValue: { fontSize: 36, fontFamily: 'Inter-Bold', color: '#fff' },
   errorBox: { backgroundColor: Colors.error[50], borderRadius: 12, padding: Spacing.md, marginBottom: Spacing.md },
   errorText: { ...Typography.body, color: Colors.error[600], fontSize: 14 },

@@ -178,6 +178,18 @@ export interface Transaction {
   plan?: Plan | null;
 }
 
+export interface SavedCard {
+  id: string;
+  brand: string;
+  last4: string;
+  expiry_month?: string | null;
+  expiry_year?: string | null;
+  provider_customer_id?: string | null;
+  provider_payment_method_id?: string | null;
+  created_at?: string;
+  is_default?: boolean;
+}
+
 export interface TransferAttempt {
   id: string;
   commitment_id: string;

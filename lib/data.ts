@@ -15,6 +15,7 @@ import {
   PayoutSummary,
   PricingMode,
   PayoutMethod,
+  SavedCard,
 } from '@/types/database';
 
 /* =========================================================
@@ -187,6 +188,92 @@ export async function createPlan(
   if (error) throw error;
 
   return data as Plan;
+}
+
+export async function duplicatePlan(planId: string): Promise<{ success: boolean; plan_id?: string; error?: string }> {
+  try {
+    const { data: existingPlan, error: planError } = await supabase
+      .from('plans')
+      .select('*')
+      .eq('id', planId)
+      .maybeSingle();
+
+    if (planError) throw planError;
+    if (!existingPlan) return { success: false, error: 'Plan not found' };
+
+    const { data: commitments, error: commitmentError } = await supabase
+      .from('commitments')
+      .select('*')
+      .eq('plan_id', planId);
+
+    if (commitmentError) throw commitmentError;
+    if (!commitments?.length) return { success: false, error: 'This plan has no recipients to duplicate' };
+
+    const newPlanName = `${existingPlan.name} (copy)`;
+    const { data: newPlan, error: insertPlanError } = await supabase
+      .from('plans')
+      .insert({
+        user_id: existingPlan.user_id,
+        name: newPlanName,
+        status: 'draft',
+        recurring: 'one_off',
+        next_run_date: null,
+        pricing_mode: existingPlan.pricing_mode ?? 'fixed_source',
+        destination_country: existingPlan.destination_country,
+        destination_currency: existingPlan.destination_currency,
+        source_amount: 0,
+        destination_amount: 0,
+        customer_pays: 0,
+        customer_fx_rate: 0,
+        provider_fx_rate: 0,
+        provider_fee: 0,
+        senda_fee: 0,
+        processing_fee: 0,
+        actual_collection_cost: null,
+        senda_fx_margin: 0,
+        quote_created_at: null,
+        quote_expires_at: null,
+        quote_locked_at: null,
+        payment_status: 'pending',
+        financial_reconciliation_status: 'pending',
+      })
+      .select('id')
+      .single();
+
+    if (insertPlanError) throw insertPlanError;
+    if (!newPlan) return { success: false, error: 'Could not create the duplicate order' };
+
+    const insertRows = commitments.map((commitment) => ({
+      plan_id: newPlan.id,
+      recipient_id: commitment.recipient_id,
+      user_id: commitment.user_id,
+      amount_gbp: Number(commitment.amount_gbp) || 0,
+      destination_currency: commitment.destination_currency,
+      amount_destination: Number(commitment.amount_destination) || 0,
+      fx_rate: Number(commitment.fx_rate) || 0,
+      receiving_method: commitment.receiving_method,
+      status: 'pending',
+      flutterwave_transfer_id: null,
+      failure_reason: null,
+      payout_method: commitment.payout_method,
+      recipient_snapshot: commitment.recipient_snapshot,
+      transfer_action: commitment.transfer_action ?? 'deferred',
+      idempotency_key: null,
+    }));
+
+    const { error: insertCommitmentsError } = await supabase
+      .from('commitments')
+      .insert(insertRows);
+
+    if (insertCommitmentsError) throw insertCommitmentsError;
+
+    return { success: true, plan_id: newPlan.id };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to create repeat order',
+    };
+  }
 }
 
 export async function updatePlan(
@@ -376,7 +463,7 @@ export async function recalcPlanTotals(
   } = await supabase
     .from('commitments')
     .select(
-      'amount_gbp, destination_currency'
+      'amount_gbp, amount_destination, destination_currency'
     )
     .eq('plan_id', planId);
 
@@ -394,6 +481,11 @@ export async function recalcPlanTotals(
       0
     );
 
+  const totalDestination = commitments.reduce(
+    (sum, commitment) => sum + Number(commitment.amount_destination || 0),
+    0
+  );
+
   const currencies = [
     ...new Set(
       commitments.map(
@@ -409,6 +501,7 @@ export async function recalcPlanTotals(
     .from('plans')
     .update({
       total_gbp: totalGbp,
+      destination_amount: totalDestination,
       total_recipients:
         commitments.length,
       destination_currencies:
@@ -480,6 +573,21 @@ export async function fetchTransactions(): Promise<
 
   return (data ??
     []) as Transaction[];
+}
+
+export function selectCustomerTransactions(transactions: Transaction[]): Transaction[] {
+  const grouped = new Map<string, Transaction>();
+  for (const transaction of transactions) {
+    const existing = grouped.get(transaction.plan_id);
+    if (!existing) {
+      grouped.set(transaction.plan_id, transaction);
+      continue;
+    }
+    if (transaction.status === 'successful' && existing.status !== 'successful') {
+      grouped.set(transaction.plan_id, transaction);
+    }
+  }
+  return Array.from(grouped.values());
 }
 
 /* =========================================================
@@ -1027,8 +1135,10 @@ export async function collectCard(payload: {
   transaction_id: string;
   amount: number;
   reference: string;
-  card: { number: string; cvv: string; expiry_month: string; expiry_year: string };
+  card?: { number: string; cvv: string; expiry_month: string; expiry_year: string };
   billing_address?: Record<string, string>;
+  save_card?: boolean;
+  saved_card?: { provider_customer_id: string; provider_payment_method_id: string };
 }): Promise<{
   success: boolean;
   status?: string;
@@ -1657,6 +1767,68 @@ export async function sendMoney(planId: string): Promise<{
   const data = await response.json();
   if (!response.ok || !data.success) {
     return { success: false, error: data?.error ?? 'Failed to send money' };
+  }
+  return data;
+}
+
+export async function startPayoutOrchestration(planId: string): Promise<{
+  success: boolean;
+  plan_id?: string;
+  total?: number;
+  errors?: string[];
+  payouts?: Array<{ commitment_id: string; status: string; error?: string | null }>;
+  error?: string;
+}> {
+  return sendMoney(planId);
+}
+
+export function getSavedCards(): SavedCard[] {
+  if (typeof globalThis === 'undefined' || !('localStorage' in globalThis)) return [];
+  try {
+    const raw = globalThis.localStorage.getItem('senda.savedCards');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as SavedCard[] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCards(cards: SavedCard[]): void {
+  if (typeof globalThis === 'undefined' || !('localStorage' in globalThis)) return;
+  try {
+    globalThis.localStorage.setItem('senda.savedCards', JSON.stringify(cards));
+  } catch {
+    // ignore local storage failures
+  }
+}
+
+export async function createFlutterwavePaymentMethod(payload: {
+  provider_customer_id?: string;
+  card: { number: string; cvv: string; expiry_month: string; expiry_year: string };
+  billing_address?: Record<string, string>;
+}): Promise<{ success: boolean; provider_payment_method_id?: string; brand?: string; last4?: string; error?: string }> {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
+
+  const session = await supabase.auth.getSession();
+  const accessToken = session.data.session?.access_token;
+  if (!accessToken) throw new Error('Not authenticated');
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/flutterwave-payment-methods`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    return { success: false, error: data?.error ?? 'Failed to create payment method' };
   }
   return data;
 }

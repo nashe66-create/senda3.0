@@ -44,7 +44,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="plans"
         options={{
-          title: 'Plans',
+          title: 'Grouped Transfers',
           tabBarIcon: ({ size, color }) => (
             <ListChecks size={size} color={color} strokeWidth={2} />
           ),

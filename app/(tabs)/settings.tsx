@@ -22,7 +22,6 @@ import {
   Clock,
   AlertCircle,
   Info,
-  RefreshCw,
 } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/ui/Card';
@@ -30,14 +29,11 @@ import { Loading } from '@/components/ui/Loading';
 import { Colors, Spacing, Typography } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { Profile } from '@/types/database';
-import { syncCorridors } from '@/lib/data';
 import { canStartAccountSetup, isAccountSetupComplete } from '@/lib/account';
 
 export default function SettingsScreen() {
   const { user, profile, signOut, refreshProfile } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -105,23 +101,6 @@ export default function SettingsScreen() {
 
   const handleStartKyc = () => {
     router.push('/kyc');
-  };
-
-  const handleSyncCorridors = async () => {
-    setSyncing(true);
-    setSyncResult(null);
-    try {
-      const result = await syncCorridors();
-      if (result.success && result.summary) {
-        setSyncResult(`Synced ${result.summary.countries_checked} countries — ${result.summary.countries_with_mobile_money} support mobile money.`);
-      } else {
-        setSyncResult(result.error ?? 'Sync failed');
-      }
-    } catch (e: any) {
-      setSyncResult(e?.message ?? 'Sync failed');
-    } finally {
-      setSyncing(false);
-    }
   };
 
   return (
@@ -216,28 +195,6 @@ export default function SettingsScreen() {
       </Card>
 
       <View style={styles.sectionLabel}>
-        <Text style={styles.sectionLabelText}>Payout Corridors</Text>
-      </View>
-
-      <Card style={styles.menuCard}>
-        <TouchableOpacity style={styles.menuItem} activeOpacity={0.6} onPress={handleSyncCorridors} disabled={syncing}>
-          <View style={styles.menuIconWrap}>
-            <RefreshCw color={Colors.neutral[600]} size={18} strokeWidth={2} />
-          </View>
-          <Text style={styles.menuText}>Refresh payout corridors</Text>
-          {syncing ? (
-            <Text style={styles.menuValue}>Syncing...</Text>
-          ) : (
-            <ChevronRight color={Colors.neutral[400]} size={18} strokeWidth={2} />
-          )}
-        </TouchableOpacity>
-      </Card>
-
-      {syncResult && (
-        <Text style={styles.syncResultText}>{syncResult}</Text>
-      )}
-
-      <View style={styles.sectionLabel}>
         <Text style={styles.sectionLabelText}>About</Text>
       </View>
 
@@ -271,7 +228,6 @@ export default function SettingsScreen() {
       </TouchableOpacity>
 
       <Text style={styles.versionText}>Senda v1.0.0</Text>
-      <Text style={styles.poweredBy}>Powered by Flutterwave</Text>
 
       <View style={{ height: Spacing.xxl }} />
     </ScrollView>

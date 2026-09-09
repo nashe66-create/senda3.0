@@ -227,10 +227,10 @@ Deno.serve(async (req: Request) => {
     });
     if (dedupError) {
       if (dedupError.code !== "23505") throw dedupError;
-      return new Response(JSON.stringify({ received: true, duplicate: true }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      // A duplicate may be a retry after a transient processing failure.
+      // Continue through the same provider re-fetch path; all state writes
+      // below are guarded by their current state and remain idempotent.
+      console.warn("Reprocessing duplicate Flutterwave webhook:", webhookId);
     }
 
     const accessToken = await getAccessToken();

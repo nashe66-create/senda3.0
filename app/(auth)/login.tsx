@@ -55,7 +55,7 @@ export default function LoginScreen() {
 
         <View style={styles.form}>
           <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>Sign in to manage your remittance plans</Text>
+          <Text style={styles.subtitle}>Sign in to manage your Senda transfers</Text>
 
           {error && (
             <View style={styles.errorBox}>

@@ -5,6 +5,7 @@ import {
   StyleSheet,
   FlatList,
   RefreshControl,
+  TouchableOpacity,
   ViewStyle,
 } from 'react-native';
 import {
@@ -18,9 +19,15 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Loading } from '@/components/ui/Loading';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Colors, Spacing, Typography } from '@/lib/theme';
-import { fetchTransactions, formatGBP, formatDateTime } from '@/lib/data';
+import { fetchTransactions, formatGBP, formatDateTime, selectCustomerTransactions } from '@/lib/data';
 import { Transaction } from '@/types/database';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+
+interface GroupedActivityItem {
+  planId: string;
+  transaction: Transaction;
+  transactionCount: number;
+}
 
 export default function ActivityScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -50,66 +57,62 @@ export default function ActivityScreen() {
     loadTransactions();
   };
 
-  const renderTransaction = ({ item }: { item: Transaction }) => {
-    const status = item.status;
-    const Icon =
-      status === 'successful'
-        ? CheckCircle2
-        : status === 'failed'
-        ? AlertCircle
-        : Clock;
-    const iconColor =
-      status === 'successful'
-        ? Colors.success[600]
-        : status === 'failed'
-        ? Colors.error[600]
-        : Colors.warning[600];
-    const iconBg =
-      status === 'successful'
-        ? Colors.success[50]
-        : status === 'failed'
-        ? Colors.error[50]
-        : Colors.warning[50];
+  const renderGroupedTransfer = ({ item }: { item: GroupedActivityItem }) => {
+    const plan = item.transaction.plan;
+    const status = plan?.status ?? item.transaction.status;
+    const Icon = status === 'completed' ? CheckCircle2 : status === 'failed' || status === 'partially_failed' ? AlertCircle : Clock;
+    const iconColor = status === 'completed' ? Colors.success[600] : status === 'failed' || status === 'partially_failed' ? Colors.error[600] : Colors.warning[600];
+    const iconBg = status === 'completed' ? Colors.success[50] : status === 'failed' || status === 'partially_failed' ? Colors.error[50] : Colors.warning[50];
 
     return (
-      <Card style={styles.txCard}>
-        <View style={styles.txLeft}>
-          <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
-            <Icon color={iconColor} size={20} strokeWidth={2} />
+      <TouchableOpacity onPress={() => router.push(`/plan/${item.planId}`)} activeOpacity={0.7}>
+        <Card style={styles.txCard}>
+          <View style={styles.txLeft}>
+            <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
+              <Icon color={iconColor} size={20} strokeWidth={2} />
+            </View>
+            <View style={styles.txInfo}>
+              <Text style={styles.txPlanName} numberOfLines={1}>{plan?.name || 'Transfer'}</Text>
+              <Text style={styles.txDate}>Sent to {plan?.total_recipients || 0} people in one payment · {formatDateTime(item.transaction.created_at)}</Text>
+            </View>
           </View>
-          <View style={styles.txInfo}>
-            <Text style={styles.txPlanName} numberOfLines={1}>
-              {item.plan?.name || 'Plan'}
-            </Text>
-            <Text style={styles.txDate}>
-              {formatDateTime(item.created_at)}
-            </Text>
-            {item.completed_at && (
-              <Text style={styles.txCompleted}>
-                Completed {formatDateTime(item.completed_at)}
-              </Text>
-            )}
+          <View style={styles.txRight}>
+            <Text style={styles.txAmount}>{formatGBP(Number(item.transaction.amount_gbp))}</Text>
+            <StatusBadge status={status} />
           </View>
-        </View>
-        <View style={styles.txRight}>
-          <Text style={styles.txAmount}>{formatGBP(Number(item.amount_gbp))}</Text>
-          <StatusBadge status={item.status} />
-        </View>
-      </Card>
+        </Card>
+      </TouchableOpacity>
     );
   };
 
   if (loading) return <Loading />;
 
-  const totalSent = transactions
-    .filter((t) => t.status === 'successful')
+  const customerTransactions = selectCustomerTransactions(transactions);
+  const totalSent = customerTransactions
+    .filter((t) => t.plan?.status === 'completed')
     .reduce((sum, t) => sum + Number(t.amount_gbp), 0);
+  const groupedTransfers = Array.from(
+    transactions.reduce((groups, transaction) => {
+      const existing = groups.get(transaction.plan_id);
+      if (existing) {
+        existing.transactionCount += 1;
+        if (transaction.status === 'successful' && existing.transaction.status !== 'successful') existing.transaction = transaction;
+      } else {
+        groups.set(transaction.plan_id, {
+          planId: transaction.plan_id,
+          transaction,
+          transactionCount: 1,
+        });
+      }
+      return groups;
+    }, new Map<string, GroupedActivityItem>()).values()
+  );
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Activity</Text>
-        <Text style={styles.subtitle}>Your transaction history</Text>
+        <Text style={styles.subtitle}>Your grouped transfer history</Text>
       </View>
 
       {transactions.length > 0 && (
@@ -118,7 +121,7 @@ export default function ActivityScreen() {
             <TrendingUp color="#fff" size={20} strokeWidth={2} />
           </View>
           <View>
-            <Text style={styles.summaryLabel}>Total successfully sent</Text>
+            <Text style={styles.summaryLabel}>Total sent in completed grouped transfers</Text>
             <Text style={styles.summaryAmount}>{formatGBP(totalSent)}</Text>
           </View>
         </View>
@@ -127,14 +130,14 @@ export default function ActivityScreen() {
       {transactions.length === 0 ? (
         <EmptyState
           icon="📊"
-          title="No transactions yet"
-          subtitle="Your payment history will appear here once you confirm a plan"
+          title="No transfers yet"
+          subtitle="Your transfer history will appear here after your first payment"
         />
       ) : (
         <FlatList
-          data={transactions}
-          keyExtractor={(item) => item.id}
-          renderItem={renderTransaction}
+          data={groupedTransfers}
+          keyExtractor={(item) => item.planId}
+          renderItem={renderGroupedTransfer}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           showsVerticalScrollIndicator={false}
