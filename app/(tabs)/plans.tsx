@@ -16,7 +16,7 @@ import { Loading } from '@/components/ui/Loading';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
 import { Colors, Spacing, Typography } from '@/lib/theme';
-import { fetchPlans, formatCurrency, formatGBP, formatDate, getRecurringLabel } from '@/lib/data';
+import { deriveGroupedTransferStatus, fetchPlans, formatCurrency, formatGBP, formatDate, getRecurringLabel } from '@/lib/data';
 import { Plan } from '@/types/database';
 
 export default function PlansScreen() {
@@ -57,7 +57,7 @@ export default function PlansScreen() {
           <View style={styles.planIconWrap}>
             <TrendingUp color={Colors.primary[600]} size={18} strokeWidth={2} />
           </View>
-          <StatusBadge status={item.status} />
+          <StatusBadge status={deriveGroupedTransferStatus(item.status, item.commitments, item.payment_status)} />
         </View>
 
         <Text style={styles.planName} numberOfLines={1}>

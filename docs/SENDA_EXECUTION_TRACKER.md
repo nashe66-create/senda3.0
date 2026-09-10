@@ -42,13 +42,9 @@ Last reviewed: 10 September 2026
 - Recurring-cycle infrastructure is deployed.
 - Payment verification triggers payout orchestration.
 
-**Current MVP blockers:**
-1. Status hierarchy must remain consistent between Payment, Grouped Transfer and individual Transfer.
-2. A Grouped Transfer must not show Completed while an individual payout is still Processing.
-3. Failed/blocked individual payouts must surface as Needs attention with a safe customer-facing reason.
-4. Select from Contacts must work.
-5. Verify release/main branch and Supabase migration alignment.
-6. Run full regression testing.
+1. Authenticated Supabase/Flutterwave runtime verification of the full payout and contact journeys remains outstanding.
+2. Repository-wide ESLint currently reports pre-existing React hook, JSX, and Edge Function resolver issues; touched behavior typechecks and builds.
+3. Verify release/main branch and Supabase migration alignment.
 
 ### Nigeria Pilot
 - Confirm provider/Flutterwave production pathway.
@@ -96,21 +92,21 @@ Last reviewed: 10 September 2026
 
 | Date | Must-finish outcome | Secondary tasks | What actually happened | Evidence | Blocker | Next action | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-09-10 | Establish the execution system and confirm Nigeria as the pilot corridor | Create the permanent tracker | Execution system established; pilot focus changed to UK → Nigeria | Daily execution automation created; tracker committed to GitHub | None | Close remaining MVP blockers | DONE |
+| 2026-09-10 | Establish the execution system and confirm Nigeria as the pilot corridor | Create the permanent tracker | Execution system established; pilot focus changed to UK → Nigeria | Daily execution automation created and tracker established | None | Close remaining MVP blockers | DONE |
+| 2026-09-10 | Complete Day 1 status, payout failure, contacts, and regression handling | Validate release readiness | Shared grouped-status derivation now gives commitment state precedence; raw provider status keys normalize; individual failures show Needs attention with safe reasons; contact picker is reachable and handles permission, empty, missing-phone, and multiple-phone cases; terminal provider failures remain failed in the existing orchestration path | `npm test` passed 4/4; `npm run typecheck` passed; `npm run build:web` passed; `git diff --check` passed | Authenticated provider/runtime scenarios A-H not run; repository-wide lint remains red on existing issues | Run authenticated payout/contact scenarios, resolve or triage baseline lint, then verify release/main and migration alignment | PARTIAL |
 
 ## Current Next Session
 
 ### Must-finish outcome
-Close the remaining MVP blockers before expanding pilot activity.
+Verify the implemented Day 1 fixes against authenticated Supabase/Flutterwave runtime behavior before expanding pilot activity.
 
 ### Tasks
-1. Verify the latest local Copilot work is safely committed, pushed and merged to `main`, without rewriting existing live migration history.
-2. Test that a Grouped Transfer cannot become Completed while an individual Transfer remains Processing.
-3. Ensure failed/blocked payouts show Needs attention with a clear safe reason.
-4. Fix and test Select from Contacts.
+1. Run authenticated payout and contact scenarios A-H, including provider FAILED/CANCELLED and reconciliation outcomes.
+2. Triage repository-wide ESLint failures without changing unrelated product behavior.
+3. Verify the current branch against release/main and Supabase migration alignment; do not merge or deploy from this branch.
 
 ### Definition of Done
-The MVP status model is consistent across Payment, Grouped Transfer and individual Transfer; payout failures are understandable to customers; Contacts selection works; and the release state is verified.
+The MVP status model is verified in authenticated runtime scenarios, payout failures are understandable to customers, Contacts selection works on supported devices, and the release state is verified.
 
 ## Execution Backlog
 

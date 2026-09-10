@@ -58,6 +58,8 @@ import {
   retryPayout,
   requestPayoutResolution,
   cancelOrder,
+  customerFailureReason,
+  deriveGroupedTransferStatus,
 } from '@/lib/data';
 import {
   PlanWithCommitments,
@@ -84,27 +86,10 @@ const methodIcons: Record<ReceivingMethod, typeof Smartphone> = {
 function payoutStatusLabel(status: string): string {
   const upper = status.toUpperCase();
   if (upper === 'COMPLETED' || upper === 'SUCCESSFUL') return 'Sent';
-  if (upper === 'FAILED') return 'Needs attention';
+  if (upper === 'FAILED' || upper === 'CANCELLED') return 'Needs attention';
   if (upper === 'RECONCILIATION_REQUIRED' || upper === 'CONFIRMING_UNKNOWN' || upper === 'CREATING_UNKNOWN') return "We're checking this transfer";
   if (upper === 'RESOLUTION') return 'Needs attention';
   return 'Processing';
-}
-
-function customerFailureReason(reason: string | null | undefined): string {
-  const value = reason?.toLowerCase() ?? '';
-  if (value.includes('recipient') || value.includes('account')) {
-    return 'Recipient details need to be updated.';
-  }
-  if (value.includes('insufficient') && value.includes('balance')) {
-    return 'This transfer could not be completed right now. Please try again later.';
-  }
-  if (value.includes('network') || value.includes('timeout') || value.includes('unavailable')) {
-    return 'A temporary service issue prevented this transfer. Please try again.';
-  }
-  if (value.includes('compliance') || value.includes('verification') || value.includes('kyc')) {
-    return 'Additional verification is needed before this transfer can be completed.';
-  }
-  return 'This recipient transfer could not be completed. Please try again or contact support.';
 }
 
 function paymentStatusLabel(status: string): string {
@@ -677,6 +662,7 @@ export default function PlanDetailScreen() {
     plan.quote_expires_at &&
     new Date(plan.quote_expires_at).getTime() <= Date.now()
   );
+  const groupedStatus = deriveGroupedTransferStatus(plan.status, plan.commitments, plan.payment_status);
 
   // Filter recipients to same corridor
   const eligibleRecipients = recipients.filter((r) => {
@@ -696,7 +682,7 @@ export default function PlanDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <ArrowLeft color={Colors.neutral[700]} size={24} strokeWidth={2} />
         </TouchableOpacity>
-        <StatusBadge status={plan.status} />
+        <StatusBadge status={groupedStatus} />
       </View>
 
       <ScrollView
@@ -950,7 +936,7 @@ export default function PlanDetailScreen() {
 
                 {commitment.status !== 'pending' && commitment.status !== 'ready' && (
                   <View style={styles.commitmentStatusRow}>
-                    <StatusBadge status={commitment.status} />
+                    <StatusBadge status={commitment.status} variant="transfer" />
                   </View>
                 )}
 
@@ -958,7 +944,7 @@ export default function PlanDetailScreen() {
                   <View style={styles.failureBox}>
                     <AlertCircle color={Colors.error[600]} size={16} strokeWidth={2} />
                     <Text style={styles.failureText}>
-                      {customerFailureReason(commitment.failure_reason_display || commitment.failure_reason)}
+                      {customerFailureReason(commitment.failure_reason_display, commitment.failure_reason)}
                     </Text>
                   </View>
                 )}

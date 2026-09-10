@@ -388,11 +388,16 @@ export default function RecipientDetailScreen() {
 
     setContactsLoading(true);
     try {
-      const permission = await Contacts.requestPermissionsAsync();
+      const existingPermission = await Contacts.getPermissionsAsync();
+      const permission = existingPermission.status === 'granted'
+        ? existingPermission
+        : await Contacts.requestPermissionsAsync();
       if (permission.status !== 'granted') {
         Alert.alert(
-          'Contacts permission needed',
-          'Contacts permission is needed to choose someone from your phone.',
+          permission.canAskAgain ? 'Contacts permission needed' : 'Enable contacts permission',
+          permission.canAskAgain
+            ? 'Contacts permission is needed to choose someone from your phone.'
+            : 'Contacts access was previously denied. Enable it in your device settings, or enter the recipient details manually.',
           [{ text: 'Enter details manually', style: 'cancel' }],
         );
         return;
@@ -402,22 +407,24 @@ export default function RecipientDetailScreen() {
         fields: [Contacts.Fields.PhoneNumbers],
         sort: Contacts.SortTypes.FirstName,
       });
-      setContacts((result.data ?? []).filter((contact: any) =>
-        contact.phoneNumbers?.some((entry: any) => entry.number)
-      ));
+      setContacts(result.data ?? []);
       setContactPickerVisible(true);
     } catch (e: any) {
-      Alert.alert('Contacts unavailable', e?.message ?? 'Could not load contacts.');
+      Alert.alert('Contacts unavailable', 'Could not load contacts. You can enter the recipient details manually.');
     } finally {
       setContactsLoading(false);
     }
   };
 
-  const handleContactSelected = (contact: any) => {
+  const handleContactSelected = (contact: any, selectedPhone?: string) => {
     const contactName = String(contact.name ?? '').trim();
-    const contactPhone = contact.phoneNumbers?.find((entry: any) => entry.number)?.number ?? '';
+    const contactPhone = selectedPhone ?? contact.phoneNumbers?.find((entry: any) => entry.number)?.number ?? '';
     if (contactName) setName(contactName);
-    if (contactPhone) setPhone(String(contactPhone));
+    if (contactPhone) {
+      setPhone(String(contactPhone));
+    } else {
+      setError('This contact has no phone number. Enter the recipient phone number manually.');
+    }
     setContactPickerVisible(false);
   };
 
@@ -1674,46 +1681,56 @@ export default function RecipientDetailScreen() {
                       </Text>
                     </TouchableOpacity>
                   );
-
-                  <Modal
-                    visible={contactPickerVisible}
-                    transparent
-                    animationType="slide"
-                    onRequestClose={() => setContactPickerVisible(false)}
-                  >
-                    <View style={styles.contactModalOverlay}>
-                      <View style={styles.contactModalContent}>
-                        <View style={styles.contactModalHeader}>
-                          <Text style={styles.contactModalTitle}>Choose a contact</Text>
-                          <TouchableOpacity onPress={() => setContactPickerVisible(false)}>
-                            <Text style={styles.contactModalClose}>Close</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <ScrollView>
-                          {contacts.length === 0 ? (
-                            <Text style={styles.contactEmptyText}>
-                              No contacts with phone numbers were found. Enter the details manually instead.
-                            </Text>
-                          ) : contacts.map((contact, index) => (
-                              <TouchableOpacity
-                                key={contact.id ?? `${contact.name}-${index}`}
-                                onPress={() => handleContactSelected(contact)}
-                                style={styles.contactRow}
-                              >
-                                <Text style={styles.contactName}>{contact.name || 'Unnamed contact'}</Text>
-                                <Text style={styles.contactPhone}>
-                                  {contact.phoneNumbers?.find((entry: any) => entry.number)?.number || 'No phone number'}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                      </View>
-                    </View>
-                  </Modal>
                 }
               )}
             </ScrollView>
           )}
+
+          <Modal
+              visible={contactPickerVisible}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setContactPickerVisible(false)}
+            >
+              <View style={styles.contactModalOverlay}>
+                <View style={styles.contactModalContent}>
+                  <View style={styles.contactModalHeader}>
+                    <Text style={styles.contactModalTitle}>Choose a contact</Text>
+                    <TouchableOpacity onPress={() => setContactPickerVisible(false)}>
+                      <Text style={styles.contactModalClose}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView>
+                    {contacts.length === 0 ? (
+                      <Text style={styles.contactEmptyText}>
+                        No contacts were found. Enter the recipient details manually instead.
+                      </Text>
+                    ) : contacts.map((contact, index) => {
+                      const phoneNumbers = (contact.phoneNumbers ?? [])
+                        .map((entry: any) => String(entry.number ?? '').trim())
+                        .filter(Boolean);
+                      return (
+                        <View key={contact.id ?? `${contact.name}-${index}`} style={styles.contactRow}>
+                          <Text style={styles.contactName}>{contact.name || 'Unnamed contact'}</Text>
+                          {phoneNumbers.length === 0 ? (
+                            <TouchableOpacity onPress={() => handleContactSelected(contact)}>
+                              <Text style={styles.contactPhone}>No phone number. Enter it manually.</Text>
+                            </TouchableOpacity>
+                          ) : phoneNumbers.map((phoneNumber: string) => (
+                            <TouchableOpacity
+                              key={`${contact.id ?? index}-${phoneNumber}`}
+                              onPress={() => handleContactSelected(contact, phoneNumber)}
+                            >
+                              <Text style={styles.contactPhone}>{phoneNumber}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              </View>
+          </Modal>
 
           {/* COUNTRY ERROR */}
 

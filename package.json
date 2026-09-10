@@ -8,7 +8,8 @@
     "dev:local": "EXPO_NO_TELEMETRY=1 expo start",
     "build:web": "expo export --platform web",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern node_modules",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/status.test.ts"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

@@ -29,6 +29,7 @@ import {
   fetchPlans,
   fetchRecipients,
   fetchTransactions,
+  deriveGroupedTransferStatus,
   formatGBP,
   formatCurrency,
   formatDate,
@@ -76,12 +77,12 @@ export default function HomeScreen() {
 
   if (loading) return <Loading />;
 
-  const activePlans = plans.filter((p) => p.status === 'draft' || p.status === 'quoted' || p.status === 'awaiting_payment' || p.status === 'funded' || p.status === 'payouts_processing' || p.status === 'payment_processing' || p.status === 'partially_failed' || p.status === 'failed');
-  const completedPlans = plans.filter((p) => p.status === 'completed');
+  const activePlans = plans.filter((p) => !['completed', 'cancelled'].includes(deriveGroupedTransferStatus(p.status, p.commitments, p.payment_status)));
+  const completedPlans = plans.filter((p) => deriveGroupedTransferStatus(p.status, p.commitments, p.payment_status) === 'completed');
   const primaryPlan = activePlans[0];
   const customerTransactions = selectCustomerTransactions(transactions);
   const totalSent = customerTransactions
-    .filter((t) => t.plan?.status === 'completed')
+    .filter((t) => t.plan && deriveGroupedTransferStatus(t.plan.status, t.plan.commitments, t.plan.payment_status) === 'completed')
     .reduce((sum, t) => sum + Number(t.amount_gbp), 0);
   const recentTx = Array.from(
     transactions.reduce((groups, transaction) => {
@@ -97,7 +98,9 @@ export default function HomeScreen() {
     : 'Welcome';
 
   const renderRecentTransaction = (tx: Transaction) => {
-    const groupedStatus = tx.plan?.status ?? tx.status;
+    const groupedStatus = tx.plan
+      ? deriveGroupedTransferStatus(tx.plan.status, tx.plan.commitments, tx.plan.payment_status)
+      : tx.status;
     const isCompleted = groupedStatus === 'completed';
     const isAttention = groupedStatus === 'failed' || groupedStatus === 'partially_failed';
 

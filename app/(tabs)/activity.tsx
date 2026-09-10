@@ -19,7 +19,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Loading } from '@/components/ui/Loading';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Colors, Spacing, Typography } from '@/lib/theme';
-import { fetchTransactions, formatGBP, formatDateTime, selectCustomerTransactions } from '@/lib/data';
+import { deriveGroupedTransferStatus, fetchTransactions, formatGBP, formatDateTime, selectCustomerTransactions } from '@/lib/data';
 import { Transaction } from '@/types/database';
 import { router, useFocusEffect } from 'expo-router';
 
@@ -59,7 +59,9 @@ export default function ActivityScreen() {
 
   const renderGroupedTransfer = ({ item }: { item: GroupedActivityItem }) => {
     const plan = item.transaction.plan;
-    const status = plan?.status ?? item.transaction.status;
+    const status = plan
+      ? deriveGroupedTransferStatus(plan.status, plan.commitments, plan.payment_status)
+      : item.transaction.status;
     const Icon = status === 'completed' ? CheckCircle2 : status === 'failed' || status === 'partially_failed' ? AlertCircle : Clock;
     const iconColor = status === 'completed' ? Colors.success[600] : status === 'failed' || status === 'partially_failed' ? Colors.error[600] : Colors.warning[600];
     const iconBg = status === 'completed' ? Colors.success[50] : status === 'failed' || status === 'partially_failed' ? Colors.error[50] : Colors.warning[50];
@@ -89,7 +91,7 @@ export default function ActivityScreen() {
 
   const customerTransactions = selectCustomerTransactions(transactions);
   const totalSent = customerTransactions
-    .filter((t) => t.plan?.status === 'completed')
+    .filter((t) => t.plan && deriveGroupedTransferStatus(t.plan.status, t.plan.commitments, t.plan.payment_status) === 'completed')
     .reduce((sum, t) => sum + Number(t.amount_gbp), 0);
   const groupedTransfers = Array.from(
     transactions.reduce((groups, transaction) => {

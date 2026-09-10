@@ -153,8 +153,7 @@ Deno.serve(async (req: Request) => {
     if (!response.ok) {
       return jsonResponse({
         success: false,
-        error: data?.message ?? "Failed to fetch transfer status",
-        flutterwave_response: data,
+        error: "We couldn't check this transfer right now. Please try again later.",
       }, response.status);
     }
 
@@ -201,7 +200,7 @@ Deno.serve(async (req: Request) => {
     console.error("Transfer status error:", error);
     return jsonResponse({
       success: false,
-      error: error instanceof Error ? error.message : "Unexpected error",
+      error: "We couldn't check this transfer right now. Please try again later.",
     }, 500);
   }
 });

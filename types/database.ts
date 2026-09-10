@@ -133,6 +133,7 @@ export interface Plan {
   quote_locked_at: string | null;
   payment_status: PaymentStatus;
   financial_reconciliation_status: FinancialReconciliationStatus;
+  commitments?: Array<{ status: CommitmentStatus | string | null }>;
 }
 
 export interface Commitment {

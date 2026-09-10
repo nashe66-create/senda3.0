@@ -17,6 +17,7 @@ import {
   PayoutMethod,
   SavedCard,
 } from '@/types/database';
+export { customerFailureReason, deriveGroupedTransferStatus } from '@/lib/status';
 
 /* =========================================================
    FORMATTING
@@ -123,7 +124,7 @@ export async function fetchPlans(): Promise<
     error,
   } = await supabase
     .from('plans')
-    .select('*')
+    .select('*, commitments(status)')
     .order('created_at', {
       ascending: false,
     });
@@ -563,7 +564,7 @@ export async function fetchTransactions(): Promise<
   } = await supabase
     .from('transactions')
     .select(
-      '*, plan:plans(*)'
+      '*, plan:plans(*, commitments(status))'
     )
     .order('created_at', {
       ascending: false,
