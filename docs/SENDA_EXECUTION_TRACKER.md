@@ -43,7 +43,7 @@ Last reviewed: 10 September 2026
 - Payment verification triggers payout orchestration.
 
 1. Authenticated Supabase/Flutterwave runtime verification of the full payout and contact journeys remains outstanding.
-2. Repository-wide ESLint currently reports pre-existing React hook, JSX, and Edge Function resolver issues; touched behavior typechecks and builds.
+2. Repository-wide ESLint currently reports pre-existing React hook, JSX, and Edge Function resolver issues; touched behaviour typechecks and builds.
 3. Verify release/main branch and Supabase migration alignment.
 
 ### Nigeria Pilot
@@ -53,6 +53,28 @@ Last reviewed: 10 September 2026
 - Define complaints/refunds/support ownership.
 - Define pilot limits and controls.
 - Recruit first pilot users.
+
+### Nigeria Provider Research — 10 September 2026
+Verified current public information:
+
+- Flutterwave's current Send App says its UK remittance services are powered and operated by Global Remit Financial Services Limited, an FCA-authorised payment institution (FRN 930827), while Flutterwave UK Limited acts as the technology platform/PSD agent arrangement described on the service. The same service states Flutterwave holds a CBN International Money Transfer Operator licence for inbound remittances in Nigeria. This is evidence of a regulated UK→Nigeria structure already operating within Flutterwave's ecosystem, not evidence that Senda itself is authorised.
+- Flutterwave's developer documentation supports NGN bank-account payouts to Nigeria and requires an approved/KYC'd account, sufficient balance and server controls; beneficiary details include bank and account information. Current documentation also describes provider status verification through webhooks/transfer-status checks.
+- Flutterwave's public payment-method documentation lists GBP card/account payment options for the United Kingdom, while its separate UK/EUR bank-account collection flow supports GBP and says approval is required for UK/European bank-account payments.
+- CBN's revised IMTO guidelines define IMTOs as approved companies facilitating remittance transfers from people/entities abroad to beneficiaries in Nigeria. CBN also states Flutterwave Technology Solutions Limited holds relevant Nigerian payment-system licences and publishes Flutterwave on its payment-provider materials.
+
+**Working conclusion:** Senda should pursue a regulated-partner/provider structure for the pilot rather than assume Senda can independently conduct UK→Nigeria remittance activity. The key commercial/regulatory question for Flutterwave is whether its existing regulated UK→Nigeria setup can support Senda's model of one UK customer payment funding multiple Nigerian beneficiary payouts, and under exactly which contracting/licensing structure.
+
+**Questions to resolve with Flutterwave:**
+1. Can Senda operate its customer experience as a technology/orchestration layer while the regulated entity remains the payment/remittance provider?
+2. Which entity would contract with the UK customer and accept/settle the customer's GBP?
+3. Which entity performs FX and determines the NGN payout amount/rate?
+4. Which entity performs KYC, AML and sanctions screening for the sender and beneficiary?
+5. Can one customer payment be allocated to multiple Nigerian payouts under the supported product/contract structure?
+6. Which refund, chargeback, complaints and failed-payout responsibilities sit with Senda versus the regulated provider?
+7. What production onboarding, transaction limits, reserve/safeguarding requirements and pricing apply to this structure?
+8. Which Flutterwave API/product should Senda use for UK collection and Nigeria payout in production?
+
+**Regulatory working rule:** Do not market Senda as the regulated remittance/payment provider or launch customer money movement in production until the exact legal/provider structure is confirmed.
 
 ### Evidence / Metrics
 - Number of separate transfers replaced by one Senda Grouped Transfer.
@@ -69,8 +91,8 @@ Last reviewed: 10 September 2026
 ## Priority Queue
 
 ### P0 — Make the MVP testable
-1. Status hierarchy + failure UX
-2. Contacts selector
+1. Status hierarchy + failure UX — implementation complete; authenticated runtime verification outstanding
+2. Contacts selector — implementation complete; device/runtime verification outstanding
 3. Release/main + migration verification
 4. Full regression
 
@@ -94,19 +116,21 @@ Last reviewed: 10 September 2026
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-10 | Establish the execution system and confirm Nigeria as the pilot corridor | Create the permanent tracker | Execution system established; pilot focus changed to UK → Nigeria | Daily execution automation created and tracker established | None | Close remaining MVP blockers | DONE |
 | 2026-09-10 | Complete Day 1 status, payout failure, contacts, and regression handling | Validate release readiness | Shared grouped-status derivation now gives commitment state precedence; raw provider status keys normalize; individual failures show Needs attention with safe reasons; contact picker is reachable and handles permission, empty, missing-phone, and multiple-phone cases; terminal provider failures remain failed in the existing orchestration path | `npm test` passed 4/4; `npm run typecheck` passed; `npm run build:web` passed; `git diff --check` passed | Authenticated provider/runtime scenarios A-H not run; repository-wide lint remains red on existing issues | Run authenticated payout/contact scenarios, resolve or triage baseline lint, then verify release/main and migration alignment | PARTIAL |
+| 2026-09-10 | Turn the Nigeria pilot pathway into a concrete operating question | Verify provider and regulatory facts | Confirmed that Flutterwave publicly documents UK→Nigeria remittance through regulated entities, Nigerian IMTO status, UK GBP collection options, and NGN bank payouts. Converted the uncertainty into a defined Flutterwave partnership questionnaire rather than assuming Senda's regulatory status or provider structure. | Flutterwave Send App/legal pages; Flutterwave payment and transfer documentation; CBN IMTO guidance; FCA payment-services/agent guidance reviewed | Exact Senda contracting, licensing, KYC/AML, FX, settlement, refund and multi-beneficiary allocation structure not yet confirmed | Contact Flutterwave and obtain a written answer to the 8 provider questions above | IN PROGRESS |
 
 ## Current Next Session
 
 ### Must-finish outcome
-Verify the implemented Day 1 fixes against authenticated Supabase/Flutterwave runtime behavior before expanding pilot activity.
+Obtain a concrete Flutterwave answer on the UK→Nigeria operating structure for Senda and continue authenticated runtime verification in parallel.
 
 ### Tasks
-1. Run authenticated payout and contact scenarios A-H, including provider FAILED/CANCELLED and reconciliation outcomes.
-2. Triage repository-wide ESLint failures without changing unrelated product behavior.
-3. Verify the current branch against release/main and Supabase migration alignment; do not merge or deploy from this branch.
+1. Send the Flutterwave partnership questionnaire covering regulated entity, UK collection, FX, Nigeria payout, KYC/AML, sanctions, refunds, complaints, limits and multi-beneficiary allocation.
+2. Run authenticated payout and contact scenarios A-H, including provider FAILED/CANCELLED and reconciliation outcomes.
+3. Triage repository-wide ESLint failures without changing unrelated product behaviour.
+4. Verify the current branch against release/main and Supabase migration alignment; do not merge or deploy from this branch.
 
 ### Definition of Done
-The MVP status model is verified in authenticated runtime scenarios, payout failures are understandable to customers, Contacts selection works on supported devices, and the release state is verified.
+We have written provider answers identifying the intended UK→Nigeria structure and responsibility split, authenticated runtime tests have been executed, customer-facing status/failure behaviour is verified, Contacts works on supported devices, and the release state is understood.
 
 ## Execution Backlog
 
@@ -115,6 +139,8 @@ The MVP status model is verified in authenticated runtime scenarios, payout fail
 
 | Date | Decision | Reason | Impact |
 | --- | --- | --- | --- |
+| 2026-09-10 | Nigeria is the first Senda pilot corridor | Gives us one concrete corridor to validate the aggregation model before expanding | All pilot/provider/regulatory work is currently centred on UK → Nigeria |
+| 2026-09-10 | Treat Flutterwave as a provider/regulated-partner candidate, not proof that Senda itself is authorised | Flutterwave publicly operates a UK→Nigeria remittance service through regulated entities, but Senda's own legal perimeter remains unresolved | We must confirm the exact contracting/licensing structure before customer-money production launch |
 
 ## Working Principle
 The purpose of this document is not to create more planning.
