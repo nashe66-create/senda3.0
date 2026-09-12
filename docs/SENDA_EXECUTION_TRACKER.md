@@ -1,5 +1,5 @@
 # SENDA — DAILY EXECUTION TRACKER
-Last reviewed: 10 September 2026
+Last reviewed: 12 September 2026
 
 ## Product Focus
 **Pilot corridor:** UK → Nigeria
@@ -77,7 +77,8 @@ Verified current public information:
 **Provider outreach — 10 September 2026:**
 - Sent a concise partnership enquiry from `info@remio.uk` to `hi@flutterwavego.com`.
 - Asked to be connected with the relevant partnerships team to discuss Senda's UK→Nigeria one-payment/multiple-beneficiary model.
-- Awaiting response.
+- On 12 September, Flutterwave support replied and directed the proposal to `partnerships@flutterwavego.com` for review by the dedicated partnerships team.
+- No substantive product/regulatory answer has yet been provided.
 
 ### Evidence / Metrics
 - Number of separate transfers replaced by one Senda Grouped Transfer.
@@ -119,21 +120,21 @@ Verified current public information:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-10 | Establish the execution system and confirm Nigeria as the pilot corridor | Create the permanent tracker | Execution system established; pilot focus changed to UK → Nigeria | Daily execution automation created and tracker established | None | Close remaining MVP blockers | DONE |
 | 2026-09-10 | Complete Day 1 status, payout failure, contacts, and regression handling | Validate release readiness | Shared grouped-status derivation now gives commitment state precedence; raw provider status keys normalize; individual failures show Needs attention with safe reasons; contact picker is reachable and handles permission, empty, missing-phone, and multiple-phone cases; terminal provider failures remain failed in the existing orchestration path | `npm test` passed 4/4; `npm run typecheck` passed; `npm run build:web` passed; `git diff --check` passed | Authenticated provider/runtime scenarios A-H not run; repository-wide lint remains red on existing issues | Run authenticated payout/contact scenarios, resolve or triage baseline lint, then verify release/main and migration alignment | PARTIAL |
-| 2026-09-10 | Turn the Nigeria pilot pathway into a concrete operating question | Verify provider and regulatory facts; contact Flutterwave | Confirmed Flutterwave publicly documents a regulated UK→Nigeria remittance structure, Nigeria inbound remittance capability, UK-origin support and NGN payout APIs. Sent a concise partnership enquiry requesting the relevant Flutterwave partnerships contact for Senda's one-payment/multiple-beneficiary model. | Current Flutterwave Send App/legal/developer documentation reviewed; email sent from `info@remio.uk` to `hi@flutterwavego.com` | Exact Senda contracting, licensing, KYC/AML, FX, settlement, refund and multi-beneficiary allocation structure not yet confirmed; awaiting Flutterwave response | Build the Nigeria pilot responsibility matrix and regulatory perimeter questions while waiting for Flutterwave; continue authenticated runtime verification in parallel | PARTIAL |
+| 2026-09-10 | Turn the Nigeria pilot pathway into a concrete operating question | Verify provider and regulatory facts; contact Flutterwave | Confirmed Flutterwave publicly documents a regulated UK→Nigeria remittance structure, Nigeria inbound remittance capability, UK-origin support and NGN payout APIs. Sent a concise partnership enquiry requesting the relevant Flutterwave partnerships contact for Senda's one-payment/multiple-beneficiary model. | Current Flutterwave Send App/legal/developer documentation reviewed; email sent from `info@remio.uk` to `hi@flutterwavego.com` | Exact Senda contracting, licensing, KYC/AML, FX, settlement, refund and multi-beneficiary allocation structure not yet confirmed; support redirected us to partnerships | Submit the proposal/questions to Flutterwave partnerships and continue authenticated runtime verification in parallel | PARTIAL |
+| 2026-09-12 | Move Flutterwave from general support to the dedicated partnerships team and obtain a concrete UK→Nigeria operating answer | Continue MVP runtime verification; prepare pilot controls | Flutterwave support replied to the 10 September enquiry and explicitly directed Senda to `partnerships@flutterwavego.com` for proposal review. No substantive structure answer yet. | Email reply received from Flutterwave support on 12 September 2026; message UID 123 in `info@remio.uk` inbox | Dedicated partnerships team has not yet received the proposal from Senda | Send the concise proposal to `partnerships@flutterwavego.com`; then build the responsibility matrix while awaiting response | IN PROGRESS |
 
 ## Current Next Session
 
 ### Must-finish outcome
-Build the **UK → Nigeria pilot operating model** so we know exactly what Senda must control, what the regulated/provider partner must control, and what evidence we need before the first live pilot.
+**Get Senda's UK → Nigeria operating model in front of Flutterwave's dedicated partnerships team and make the pilot responsibility split concrete.**
 
 ### Tasks
-1. Create the responsibility matrix covering customer relationship, GBP collection, safeguarding/settlement, FX, KYC/AML, sanctions, beneficiary validation, NGN payout, failed payouts, refunds, complaints and support.
-2. Define proposed pilot limits and operational controls for the first 10 users.
-3. Prepare the regulatory perimeter questions we need answered before launch, clearly separating verified facts from assumptions requiring legal/provider confirmation.
-4. Continue authenticated payout/contact runtime verification in parallel via the engineering workflow.
+1. Send the concise Senda proposal to `partnerships@flutterwavego.com`, including the one-payment/multiple-beneficiary model and the eight questions that need confirmation.
+2. Build the responsibility matrix and proposed first-10-user pilot controls using "Senda", "regulated/provider partner", or "Provider/legal confirmation required" — no guessing.
+3. Continue authenticated payout/contact runtime verification in parallel via the engineering workflow.
 
 ### Definition of Done
-We have a concrete UK→Nigeria pilot operating model, a responsibility matrix, proposed pilot controls, and a short list of regulatory/provider questions that must be answered before customer-money production launch.
+The proposal has been submitted to Flutterwave partnerships, the responsibility matrix and proposed pilot controls exist as concrete working documents, and authenticated MVP runtime verification has progressed with evidence.
 
 ## Execution Backlog
 
@@ -145,6 +146,7 @@ We have a concrete UK→Nigeria pilot operating model, a responsibility matrix, 
 | 2026-09-10 | Nigeria is the first Senda pilot corridor | Gives us one concrete corridor to validate the aggregation model before expanding | All pilot/provider/regulatory work is currently centred on UK → Nigeria |
 | 2026-09-10 | Treat Flutterwave as a provider/regulated-partner candidate, not proof that Senda itself is authorised | Flutterwave publicly operates a UK→Nigeria remittance service through regulated entities, but Senda's own legal perimeter remains unresolved | We must confirm the exact contracting/licensing structure before customer-money production launch |
 | 2026-09-10 | Use a concise first-contact email rather than sending a full compliance questionnaire | The objective of the first outreach is to reach the correct partnerships/compliance team and start a conversation | Detailed responsibility and regulatory questions will be handled once the appropriate Flutterwave contact responds |
+| 2026-09-12 | Flutterwave partnerships is the correct next contact for the proposal | Flutterwave support explicitly directed the Senda enquiry to the dedicated partnerships team | Next provider action is a concise proposal to `partnerships@flutterwavego.com`; no duplicate general-support outreach |
 
 ## Working Principle
 The purpose of this document is not to create more planning.
