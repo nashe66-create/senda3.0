@@ -31,7 +31,7 @@ These are dated benchmark observations, not live quotes. Provider-level pricing 
 
 The Migration Observatory's 2025 briefing, using World Bank RPW data, reported average costs for sending £120 from the UK in 2024 of: Nigeria 6.5%, Kenya 5.4%, Zambia 7.9%, South Africa 7.2%, Uganda 5.0%, Tanzania 5.7%, Rwanda 7.9% and Ghana 5.1%. The briefing also reported that around 27% of people born abroad sent remittances in 2021/22, with migrants from Africa and the Middle East among the groups most likely to remit.
 
-Bilateral UK destination figures are limited: the Migration Observatory notes that official bilateral remittance estimates after 2021 are not available in the same form. Historical 2021 estimates included Nigeria £2.76bn, Kenya £1.02bn, South Africa £0.??bn and Ghana £0.668bn; use the underlying source before quoting the South Africa value in external materials.
+Bilateral UK destination estimates have an important data limitation: the Migration Observatory notes that official bilateral remittance estimates after 2021 are not available in the same form. Historical figures should therefore be treated as historical context rather than current market size.
 
 ## Provider landscape
 
