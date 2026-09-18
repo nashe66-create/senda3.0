@@ -1,5 +1,5 @@
 # SENDA — DAILY EXECUTION TRACKER
-Last reviewed: 12 September 2026
+Last reviewed: 18 September 2026
 
 ## Product Focus
 **Pilot corridor:** UK → Nigeria
@@ -119,22 +119,23 @@ Verified current public information:
 | Date | Must-finish outcome | Secondary tasks | What actually happened | Evidence | Blocker | Next action | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-10 | Establish the execution system and confirm Nigeria as the pilot corridor | Create the permanent tracker | Execution system established; pilot focus changed to UK → Nigeria | Daily execution automation created and tracker established | None | Close remaining MVP blockers | DONE |
-| 2026-09-10 | Complete Day 1 status, payout failure, contacts, and regression handling | Validate release readiness | Shared grouped-status derivation now gives commitment state precedence; raw provider status keys normalize; individual failures show Needs attention with safe reasons; contact picker is reachable and handles permission, empty, missing-phone, and multiple-phone cases; terminal provider failures remain failed in the existing orchestration path | `npm test` passed 4/4; `npm run typecheck` passed; `npm run build:web` passed; `git diff --check` passed | Authenticated provider/runtime scenarios A-H not run; repository-wide lint remains red on existing issues | Run authenticated payout/contact scenarios, resolve or triage baseline lint, then verify release/main and migration alignment | PARTIAL |
+| 2026-09-10 | Complete Day 1 status, payout failure, contacts, and regression handling | Validate release readiness | Shared grouped-status derivation now gives commitment state precedence; raw provider status keys normalize; individual failures show Needs attention with safe reasons; contact picker is reachable and handles permission, empty, missing-phone, and multiple-phone cases; terminal provider failures remain failed in the existing orchestration path | `npm test` passed 4/4; `npm run typecheck` passed; `npm run build:web` passed; `git diff --check` passed | Authenticated provider/runtime scenarios A-H not run; repository-wide lint remains red on existing issues | Run authenticated payout/contact scenarios, triage baseline lint, then verify release/main and migration alignment | PARTIAL |
 | 2026-09-10 | Turn the Nigeria pilot pathway into a concrete operating question | Verify provider and regulatory facts; contact Flutterwave | Confirmed Flutterwave publicly documents a regulated UK→Nigeria remittance structure, Nigeria inbound remittance capability, UK-origin support and NGN payout APIs. Sent a concise partnership enquiry requesting the relevant Flutterwave partnerships contact for Senda's one-payment/multiple-beneficiary model. | Current Flutterwave Send App/legal/developer documentation reviewed; email sent from `info@remio.uk` to `hi@flutterwavego.com` | Exact Senda contracting, licensing, KYC/AML, FX, settlement, refund and multi-beneficiary allocation structure not yet confirmed; support redirected us to partnerships | Submit the proposal/questions to Flutterwave partnerships and continue authenticated runtime verification in parallel | PARTIAL |
 | 2026-09-12 | Move Flutterwave from general support to the dedicated partnerships team and obtain a concrete UK→Nigeria operating answer | Continue MVP runtime verification; prepare pilot controls | Flutterwave support replied to the 10 September enquiry and explicitly directed Senda to `partnerships@flutterwavego.com` for proposal review. No substantive structure answer yet. | Email reply received from Flutterwave support on 12 September 2026; message UID 123 in `info@remio.uk` inbox | Dedicated partnerships team has not yet received the proposal from Senda | Send the concise proposal to `partnerships@flutterwavego.com`; then build the responsibility matrix while awaiting response | IN PROGRESS |
+| 2026-09-18 | Close the outstanding Flutterwave Partnerships outreach step | Begin authenticated MVP verification; prepare pilot-user shortlist | No new evidence has been recorded since the 12 September provider handoff. The proposal submission to Partnerships remains unverified, so the provider pathway cannot progress from research into a concrete answer. | GitHub tracker reviewed on 18 September; last provider evidence remains Flutterwave Support reply from 12 September | No evidence of proposal submission or substantive Partnerships response; authenticated runtime verification also remains outstanding | Verify/send the proposal to `partnerships@flutterwavego.com`, record evidence, then move to authenticated payout testing | IN PROGRESS |
 
 ## Current Next Session
 
 ### Must-finish outcome
-**Get Senda's UK → Nigeria operating model in front of Flutterwave's dedicated partnerships team and make the pilot responsibility split concrete.**
+**Close the outstanding Flutterwave Partnerships outreach step and create evidence that the proposal has reached the correct team.**
 
 ### Tasks
-1. Send the concise Senda proposal to `partnerships@flutterwavego.com`, including the one-payment/multiple-beneficiary model and the eight questions that need confirmation.
-2. Build the responsibility matrix and proposed first-10-user pilot controls using "Senda", "regulated/provider partner", or "Provider/legal confirmation required" — no guessing.
-3. Continue authenticated payout/contact runtime verification in parallel via the engineering workflow.
+1. Check sent mail for the Senda proposal to `partnerships@flutterwavego.com`. If absent, send the concise proposal; if already sent, record the date/message evidence and do not duplicate it.
+2. Run one authenticated MVP payout scenario and record the result.
+3. Start the first-10-user Nigeria pilot shortlist only after the provider outreach step is evidenced.
 
 ### Definition of Done
-The proposal has been submitted to Flutterwave partnerships, the responsibility matrix and proposed pilot controls exist as concrete working documents, and authenticated MVP runtime verification has progressed with evidence.
+There is evidence that the Flutterwave Partnerships proposal was submitted (or a prior submission has been verified), the next provider response/action is clearly tracked, and at least one authenticated payout runtime scenario has been executed or its concrete blocker recorded.
 
 ## Execution Backlog
 
