@@ -11,7 +11,7 @@ Open PowerShell and run:
 ```powershell
 git clone https://github.com/nashe66-create/senda3.0.git
 cd senda3.0
-npm ci
+npm install
 Copy-Item .env.example .env
 ```
 
