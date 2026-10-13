@@ -698,8 +698,7 @@ export async function fetchFlutterwaveOptions(): Promise<
       .EXPO_PUBLIC_SUPABASE_URL;
 
   const supabaseAnonKey =
-    process.env
-      .EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY));
 
   if (
     !supabaseUrl ||
@@ -781,8 +780,7 @@ export async function fetchFlutterwaveCountryOptions(
       .EXPO_PUBLIC_SUPABASE_URL;
 
   const supabaseAnonKey =
-    process.env
-      .EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY));
 
   if (
     !supabaseUrl ||
@@ -883,8 +881,7 @@ export async function fetchLiveFxRate(
       .EXPO_PUBLIC_SUPABASE_URL;
 
   const supabaseAnonKey =
-    process.env
-      .EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY));
 
   if (
     !supabaseUrl ||
@@ -1067,7 +1064,7 @@ export async function submitKyc(payload: {
   };
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1105,7 +1102,7 @@ export async function fetchKycStatus(): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1147,7 +1144,7 @@ export async function collectCard(payload: {
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1188,7 +1185,7 @@ export async function authorizeCharge(payload: {
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1224,7 +1221,7 @@ export async function verifyCharge(transactionId: string): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1274,7 +1271,7 @@ export async function createTransfer(payload: {
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1304,7 +1301,7 @@ export async function confirmTransfer(commitmentId: string): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1333,7 +1330,7 @@ export async function cancelTransfer(commitmentId: string): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1368,7 +1365,7 @@ export async function fetchWalletBalance(currency = 'GBP'): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1404,7 +1401,7 @@ export async function fetchTransferStatus(commitmentId: string): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1439,7 +1436,7 @@ export async function syncCorridors(): Promise<{
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
@@ -1511,7 +1508,7 @@ export async function createFlutterwaveRecipient(params: {
   bankAccount?: { account_number: string; bank_code: string; country: string };
 }): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
@@ -1558,7 +1555,7 @@ export async function updateFlutterwaveRecipient(params: {
   bankAccount?: { account_number: string; bank_code: string; country: string };
 }): Promise<{ success: boolean; recipientId: string | null; accountName: string | null; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
@@ -1603,7 +1600,7 @@ export async function updateFlutterwaveRecipient(params: {
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
@@ -1809,7 +1806,7 @@ export async function createFlutterwavePaymentMethod(payload: {
   billing_address?: Record<string, string>;
 }): Promise<{ success: boolean; provider_payment_method_id?: string; brand?: string; last4?: string; error?: string }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
 
   const session = await supabase.auth.getSession();
