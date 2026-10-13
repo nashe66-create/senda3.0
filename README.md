@@ -6,7 +6,7 @@
 
 See [docs/standalone-prototype.md](docs/standalone-prototype.md) for the Windows setup, Supabase environment configuration, local run commands, and steps to publish a permanent browser prototype.
 
-Install dependencies with `npm ci`, configure `.env` using `.env.example`, then run:
+Install dependencies with `npm install`, configure `.env` using `.env.example`, then run:
 
 ```sh
 npm run dev
