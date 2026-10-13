@@ -1,11 +1,11 @@
 {
-  "name": "bolt-expo-starter",
+  "name": "senda",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "EXPO_NO_TELEMETRY=1 expo start --tunnel --go",
-    "dev:local": "EXPO_NO_TELEMETRY=1 expo start",
+    "dev": "expo start --tunnel --go",
+    "dev:local": "expo start",
     "build:web": "expo export --platform web",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern node_modules",
     "typecheck": "tsc --noEmit"
