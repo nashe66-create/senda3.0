@@ -29,6 +29,8 @@ export default function NewPlanScreen() {
     next_run_date?: string;
     pricing_mode?: PricingMode;
     source_amount?: string;
+    selected_recipient_ids?: string;
+    recipient_amounts?: string;
   }>();
   const name = transfer_name || 'Family support';
   const [recurring, setRecurring] = useState<RecurringType>(recurringParam || 'one_off');
@@ -80,6 +82,38 @@ export default function NewPlanScreen() {
     if (!createdRecipient || createdRecipient.country !== destinationCountry || createdRecipient.currency !== selectedCountryInfo?.currency) return;
     setSelectedRecipientIds((current) => current.includes(createdRecipient.id) ? current : [...current, createdRecipient.id]);
   }, [created_recipient_id, recipients, destinationCountry, selectedCountryInfo?.currency]);
+
+  // Preserve selections and entered amounts when the user leaves this screen
+  // to create another recipient, then returns to this transfer.
+  useEffect(() => {
+    if (!selected_recipient_ids) return;
+    try {
+      const parsed: unknown = JSON.parse(selected_recipient_ids);
+      if (!Array.isArray(parsed)) return;
+      const restoredIds = parsed
+        .filter((id): id is string => typeof id === 'string')
+        .slice(0, 5);
+      setSelectedRecipientIds((current) =>
+        [...new Set([...current, ...restoredIds])].slice(0, 5)
+      );
+    } catch {
+      // Ignore malformed restoration parameters and keep the current selection.
+    }
+  }, [selected_recipient_ids]);
+
+  useEffect(() => {
+    if (!recipient_amounts) return;
+    try {
+      const parsed: unknown = JSON.parse(recipient_amounts);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      setRecipientAmounts((current) => ({
+        ...(parsed as Record<string, string>),
+        ...current,
+      }));
+    } catch {
+      // Ignore malformed restoration parameters and keep the current amounts.
+    }
+  }, [recipient_amounts]);
 
   const handleCreate = async () => {
     let createdPlanId: string | null = null;
@@ -175,6 +209,23 @@ export default function NewPlanScreen() {
     recipient.verification_status === 'verified' &&
     Boolean(recipient.flutterwave_recipient_id)
   );
+
+  const handleAddRecipient = () => {
+    if (!destinationCountry) return;
+    const params = new URLSearchParams({
+      destination_country: destinationCountry,
+      destination_currency: selectedCountryInfo?.currency || '',
+      return_to_new_plan: 'true',
+      transfer_name: name,
+      recurring,
+      next_run_date: nextRunDate,
+      pricing_mode: pricingMode || '',
+      source_amount: sourceAmount,
+      selected_recipient_ids: JSON.stringify(selectedRecipientIds),
+      recipient_amounts: JSON.stringify(recipientAmounts),
+    });
+    router.push(`/recipient/new?${params.toString()}`);
+  };
 
   const toggleRecipient = (recipientId: string) => {
     setSelectedRecipientIds((current) => {
@@ -320,19 +371,7 @@ export default function NewPlanScreen() {
                     You don't have anyone set up for this destination yet.
                   </Text>
                   <Button
-                    onPress={() => {
-                      const params = new URLSearchParams({
-                        destination_country: destinationCountry,
-                        destination_currency: selectedCountryInfo?.currency || '',
-                        return_to_new_plan: 'true',
-                        transfer_name: name,
-                        recurring,
-                        next_run_date: nextRunDate,
-                        pricing_mode: pricingMode || '',
-                        source_amount: sourceAmount,
-                      });
-                      router.push(`/recipient/new?${params.toString()}`);
-                    }}
+                    onPress={handleAddRecipient}
                     size="sm"
                     style={styles.addPersonBtn}
                   >
@@ -340,43 +379,54 @@ export default function NewPlanScreen() {
                   </Button>
                 </View>
               ) : (
-                eligibleRecipients.map((recipient) => {
-                  const selected = selectedRecipientIds.includes(recipient.id);
-                  return (
-                    <View
-                      key={recipient.id}
-                      style={[styles.personItem, selected && styles.personItemSelected]}
-                    >
-                      <TouchableOpacity
-                        onPress={() => toggleRecipient(recipient.id)}
-                        style={styles.personItemHeader}
-                        activeOpacity={0.75}
+                <>
+                  {eligibleRecipients.map((recipient) => {
+                    const selected = selectedRecipientIds.includes(recipient.id);
+                    return (
+                      <View
+                        key={recipient.id}
+                        style={[styles.personItem, selected && styles.personItemSelected]}
                       >
-                        <View style={styles.personInfo}>
-                          <Text style={styles.personName}>{recipient.name}</Text>
-                          <Text style={styles.personMeta}>{recipient.currency} · {recipient.receiving_method.replace('_', ' ')}</Text>
-                        </View>
-                        {selected && <CheckCircle2 color={Colors.primary[600]} size={20} strokeWidth={2} />}
-                      </TouchableOpacity>
-                      {selected && (
-                        <View style={styles.personAmountWrap}>
-                          <Text style={styles.personAmountPrefix}>
-                            {pricingMode === 'fixed_source' ? '£' : `${recipient.currency} `}
-                          </Text>
-                          <TextInput
-                            style={styles.personAmountInput}
-                            value={recipientAmounts[recipient.id] || ''}
-                            onChangeText={(value) => setRecipientAmounts((amounts) => ({ ...amounts, [recipient.id]: value }))}
-                            placeholder="0.00"
-                            placeholderTextColor={Colors.neutral[400]}
-                            keyboardType="decimal-pad"
-                            inputMode="decimal"
-                          />
-                        </View>
-                      )}
-                    </View>
-                  );
-                })
+                        <TouchableOpacity
+                          onPress={() => toggleRecipient(recipient.id)}
+                          style={styles.personItemHeader}
+                          activeOpacity={0.75}
+                        >
+                          <View style={styles.personInfo}>
+                            <Text style={styles.personName}>{recipient.name}</Text>
+                            <Text style={styles.personMeta}>{recipient.currency} · {recipient.receiving_method.replace('_', ' ')}</Text>
+                          </View>
+                          {selected && <CheckCircle2 color={Colors.primary[600]} size={20} strokeWidth={2} />}
+                        </TouchableOpacity>
+                        {selected && (
+                          <View style={styles.personAmountWrap}>
+                            <Text style={styles.personAmountPrefix}>
+                              {pricingMode === 'fixed_source' ? '£' : `${recipient.currency} `}
+                            </Text>
+                            <TextInput
+                              style={styles.personAmountInput}
+                              value={recipientAmounts[recipient.id] || ''}
+                              onChangeText={(value) => setRecipientAmounts((amounts) => ({ ...amounts, [recipient.id]: value }))}
+                              placeholder="0.00"
+                              placeholderTextColor={Colors.neutral[400]}
+                              keyboardType="decimal-pad"
+                              inputMode="decimal"
+                            />
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                  <Button
+                    onPress={handleAddRecipient}
+                    size="sm"
+                    variant="outline"
+                    style={styles.addPersonBtn}
+                    disabled={selectedRecipientIds.length >= 5}
+                  >
+                    {selectedRecipientIds.length >= 5 ? 'Maximum of 5 people selected' : 'Add another person'}
+                  </Button>
+                </>
               )}
             </View>
           )}
