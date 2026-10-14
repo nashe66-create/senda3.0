@@ -289,7 +289,7 @@ Deno.serve(async (req: Request) => {
     ]);
 
     // Deterministic idempotency key
-    const idempotencyKey = transaction.idempotency_key ?? `SENDA-PAY-${transaction.plan_id}`;
+    const idempotencyKey = transaction.idempotency_key ?? `SENDA-PAY-${transaction.id}`;
 
     const { error: idempotencyError } = await serviceClient
       .from("transactions")
