@@ -114,6 +114,56 @@ export default function CollectScreen() {
     return verifyResult;
   };
 
+  // A charge can stay pending while the provider completes authorisation.
+  // Poll until it reaches a terminal state; never ask the customer to pay twice.
+  useEffect(() => {
+    if (chargeStatus !== 'processing' || !transactionId) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const checkStatus = async () => {
+      try {
+        const result = await verifyCharge(transactionId);
+        if (cancelled) return;
+
+        if (result.verified && result.status === 'successful') {
+          setError(null);
+          setChargeStatus('succeeded');
+          if (planId && !payoutStartedRef.current) {
+            payoutStartedRef.current = true;
+            const payoutResult = await startPayoutOrchestration(planId);
+            if (!payoutResult.success) {
+              payoutStartedRef.current = false;
+              console.error('Automatic payout orchestration did not start:', payoutResult.error);
+            }
+          }
+          return;
+        }
+
+        if (result.verified && result.status === 'failed' && result.charge_status !== 'succeeded') {
+          setError('The payment provider confirmed that this payment did not succeed. Check the details before trying again.');
+          setChargeStatus('failed');
+          return;
+        }
+
+        if (result.charge_status === 'succeeded' && (!result.verified || result.status !== 'successful')) {
+          setError('The provider has reported a payment, but Senda is still reconciling it. Do not pay again while this message is shown.');
+        }
+      } catch (e) {
+        console.warn('Payment status check will be retried:', e);
+      }
+
+      if (!cancelled) timer = setTimeout(checkStatus, 10000);
+    };
+
+    void checkStatus();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [chargeStatus, transactionId, planId]);
+
   const handlePay = async () => {
     if (!paymentReference) {
       setError('This transaction has no payment reference. Please return to the plan and start payment again.');
