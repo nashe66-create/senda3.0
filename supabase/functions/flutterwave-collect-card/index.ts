@@ -365,7 +365,7 @@ Deno.serve(async (req: Request) => {
           .eq("id", payload.transaction_id);
         await serviceClient
           .from("plans")
-          .update({ status: "payment_failed", payment_status: "failed" })
+          .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
           .eq("id", transaction.plan_id)
           .eq("status", "payment_processing");
         return jsonResponse({
@@ -448,7 +448,7 @@ Deno.serve(async (req: Request) => {
             .eq("status", "pending");
           await cleanupClient
             .from("plans")
-            .update({ status: "payment_failed", payment_status: "failed" })
+            .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
             .eq("id", recoveryContext.planId)
             .eq("status", "payment_processing");
         }
