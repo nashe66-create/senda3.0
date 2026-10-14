@@ -125,7 +125,7 @@ export default function CollectScreen() {
   // A charge can stay pending while the provider completes authorisation.
   // Poll until it reaches a terminal state; never ask the customer to pay twice.
   useEffect(() => {
-    if (chargeStatus !== 'processing' || !transactionId) return;
+    if (chargeStatus !== 'processing' || !transactionId || !pollPaymentStatus) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -200,7 +200,7 @@ export default function CollectScreen() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [chargeStatus, transactionId, planId]);
+  }, [chargeStatus, transactionId, planId, pollPaymentStatus]);
 
   const applyVerificationResult = (result: Awaited<ReturnType<typeof verifyCharge>>) => {
     if (result.verified && result.status === 'successful') {
