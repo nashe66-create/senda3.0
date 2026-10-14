@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   TouchableOpacity,
   Modal,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, CreditCard, Lock, CheckCircle2, AlertCircle, Loader } from 'lucide-react-native';
@@ -47,6 +48,7 @@ export default function CollectScreen() {
   const [pinInput, setPinInput] = useState('');
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
+  const payoutStartedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
