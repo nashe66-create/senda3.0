@@ -419,6 +419,44 @@ Deno.serve(async (req: Request) => {
     }, response.status);
   } catch (error) {
     console.error("Flutterwave collect-card error:", error);
+
+    // If the request may have reached Flutterwave, leave it pending so the
+    // verification endpoint can recover it by the unique payment reference.
+    if (recoveryContext && (providerRequestStarted || !recoveryContext.mayFailSafelyBeforeProvider)) {
+      return jsonResponse({
+        success: true,
+        status: "pending",
+        charge_id: null,
+        next_action: null,
+        confirmation_pending: true,
+        error: "The payment request may have reached Flutterwave. Senda is checking its status; do not submit it again.",
+      }, 202);
+    }
+
+    // Only roll back when we know no prior attempt existed and no provider
+    // request was started. Never overwrite a status already changed by a webhook.
+    if (recoveryContext?.mayFailSafelyBeforeProvider) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL");
+        const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        if (supabaseUrl && serviceRoleKey) {
+          const cleanupClient = createClient(supabaseUrl, serviceRoleKey);
+          await cleanupClient
+            .from("transactions")
+            .update({ status: "failed", idempotency_key: null })
+            .eq("id", recoveryContext.transactionId)
+            .eq("status", "pending");
+          await cleanupClient
+            .from("plans")
+            .update({ status: "payment_failed", payment_status: "failed" })
+            .eq("id", recoveryContext.planId)
+            .eq("status", "payment_processing");
+        }
+      } catch (cleanupError) {
+        console.error("Could not safely restore pre-payment state:", cleanupError);
+      }
+    }
+
     return jsonResponse({
       success: false,
       error: error instanceof Error ? error.message : "Unexpected error",
