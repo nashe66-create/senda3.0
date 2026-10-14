@@ -280,10 +280,12 @@ export default function CollectScreen() {
 
       if (!result.success) {
         setError(result.error ?? 'Payment failed');
+        setPollPaymentStatus(false);
         setChargeStatus('failed');
         return;
       }
 
+      setPollPaymentStatus(true);
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
         applyVerificationResult(verifyResult);
