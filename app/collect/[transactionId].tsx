@@ -205,11 +205,14 @@ export default function CollectScreen() {
   const applyVerificationResult = (result: Awaited<ReturnType<typeof verifyCharge>>) => {
     if (result.verified && result.status === 'successful') {
       setError(null);
+      setPollPaymentStatus(false);
       setChargeStatus('succeeded');
     } else if (result.verified && result.status === 'failed' && result.charge_status !== 'succeeded') {
       setError('The payment provider confirmed that this payment did not succeed. Check the details before trying again.');
+      setPollPaymentStatus(false);
       setChargeStatus('failed');
     } else {
+      setPollPaymentStatus(true);
       setChargeStatus('processing');
       setError(result.charge_status === 'succeeded'
         ? 'The provider has reported a payment, but Senda is still reconciling it. Do not pay again while this message is shown.'
