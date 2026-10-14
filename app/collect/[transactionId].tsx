@@ -103,9 +103,11 @@ export default function CollectScreen() {
 
   const verifyAndStartPayouts = async () => {
     const verifyResult = await verifyCharge(transactionId);
-    if (verifyResult.verified && planId) {
+    if (verifyResult.verified && verifyResult.status === 'successful' && planId && !payoutStartedRef.current) {
+      payoutStartedRef.current = true;
       const payoutResult = await startPayoutOrchestration(planId);
       if (!payoutResult.success) {
+        payoutStartedRef.current = false;
         console.error('Automatic payout orchestration did not start:', payoutResult.error);
       }
     }
