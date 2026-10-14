@@ -259,7 +259,7 @@ Deno.serve(async (req: Request) => {
           quote_locked: Boolean(plan?.quote_locked_at),
         });
       }
-    } else if (chargeStatus === "failed") {
+    } else if (chargeStatus === "failed" || chargeStatus === "voided") {
       dbStatus = "failed";
       verified = true;
     }
@@ -277,16 +277,16 @@ Deno.serve(async (req: Request) => {
         .update(updateData)
         .eq("id", transactionId);
 
-      if (dbStatus === "failed" && transaction.plan_id && chargeStatus === "failed") {
-        await serviceClient
-          .from("plans")
-          .update({
-            payment_status: "failed",
-            status: "payment_failed",
-          })
-          .eq("id", transaction.plan_id)
-          .in("status", ["awaiting_payment", "payment_processing"]);
-      }
+    }
+
+    if (dbStatus === "failed" && transaction.plan_id && (chargeStatus === "failed" || chargeStatus === "voided")) {
+      // The provider has confirmed no money was collected, so unlock the plan
+      // for a fresh quote/payment attempt instead of reusing the old transaction.
+      await serviceClient
+        .from("plans")
+        .update({ payment_status: "pending", status: "quoted", quote_locked_at: null })
+        .eq("id", transaction.plan_id)
+        .in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
     }
 
     return jsonResponse({
