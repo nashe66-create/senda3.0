@@ -142,26 +142,29 @@ Deno.serve(async (req: Request) => {
       );
 
       if (matchingCharges.length !== 1) {
-        if (matchingCharges.length === 0 && transaction.status === "pending") {
-          const { data: processingPlan } = await serviceClient
+        if (matchingCharges.length === 0 && ["pending", "failed"].includes(transaction.status)) {
+          const { data: paymentPlan } = await serviceClient
             .from("plans")
             .select("id, status, updated_at")
             .eq("id", transaction.plan_id)
             .maybeSingle();
-          const lastPaymentStateChange = Date.parse(String(processingPlan?.updated_at ?? ""));
-          const oldPendingRequestHasNoProviderCharge =
-            processingPlan?.status === "payment_processing" &&
+          const lastPaymentStateChange = Date.parse(String(paymentPlan?.updated_at ?? ""));
+          const paymentStateIsRecoverable =
+            (paymentPlan?.status === "payment_processing" && transaction.status === "pending") ||
+            paymentPlan?.status === "payment_failed";
+          const oldPaymentAttempt =
+            paymentStateIsRecoverable &&
             Number.isFinite(lastPaymentStateChange) &&
             Date.now() - lastPaymentStateChange > 30 * 60 * 1000;
 
-          // The plan timestamp is updated when payment_processing begins. Using
-          // it avoids racing a new submission whose transaction itself is old.
-          if (oldPendingRequestHasNoProviderCharge) {
+          // Only reopen an old attempt if Flutterwave successfully returned an
+          // empty charge list for this exact unique reference.
+          if (oldPaymentAttempt) {
             const { data: failedTransaction, error: failTransactionError } = await serviceClient
               .from("transactions")
               .update({ status: "failed", idempotency_key: null })
               .eq("id", transactionId)
-              .eq("status", "pending")
+              .in("status", ["pending", "failed"])
               .is("flutterwave_charge_id", null)
               .select("id")
               .maybeSingle();
@@ -171,7 +174,7 @@ Deno.serve(async (req: Request) => {
                 .from("plans")
                 .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
                 .eq("id", transaction.plan_id)
-                .eq("status", "payment_processing");
+                .in("status", ["payment_processing", "payment_failed"]);
 
               return jsonResponse({
                 success: true,
