@@ -461,7 +461,7 @@ export default function PlanDetailScreen() {
     }
   };
 
-  const handleCreateQuote = async () => {
+  const handleCreateQuote = useCallback(async () => {
     if (!plan) return;
     setQuoteLoading(true);
     setQuoteError(null);
@@ -501,7 +501,53 @@ export default function PlanDetailScreen() {
     } finally {
       setQuoteLoading(false);
     }
-  };
+  }, [plan, id]);
+
+  // Unpaid quotes expire quickly. Refresh them automatically when the user
+  // returns to an expired quoted plan, but never reprice a locked/in-payment order.
+  const autoRefreshedQuoteKeyRef = useRef<string | null>(null);
+
+  // Refresh an expired quote as soon as an unpaid quoted plan is opened.
+  useEffect(() => {
+    if (
+      loading ||
+      !plan ||
+      plan.status !== 'quoted' ||
+      !plan.quote_expires_at ||
+      new Date(plan.quote_expires_at).getTime() > Date.now() ||
+      plan.commitments.length === 0
+    ) {
+      return;
+    }
+
+    const key = `${plan.id}:${plan.quote_expires_at}`;
+    if (autoRefreshedQuoteKeyRef.current === key) return;
+    autoRefreshedQuoteKeyRef.current = key;
+    setShowQuoteModal(true);
+    void handleCreateQuote();
+  }, [loading, plan?.id, plan?.status, plan?.quote_expires_at, plan?.commitments.length, handleCreateQuote]);
+
+  // If the user leaves the quote modal open until its countdown reaches zero,
+  // refresh the quote automatically rather than requiring a separate button tap.
+  useEffect(() => {
+    if (
+      !plan ||
+      plan.status !== 'quoted' ||
+      !showQuoteModal ||
+      quoteLoading ||
+      quoteCountdown !== 0 ||
+      plan.commitments.length === 0
+    ) {
+      return;
+    }
+
+    const expiresAt = quote?.quote_expires_at || plan.quote_expires_at;
+    if (!expiresAt || new Date(expiresAt).getTime() > Date.now()) return;
+    const key = `${plan.id}:${expiresAt}`;
+    if (autoRefreshedQuoteKeyRef.current === key) return;
+    autoRefreshedQuoteKeyRef.current = key;
+    void handleCreateQuote();
+  }, [plan?.id, plan?.status, plan?.quote_expires_at, plan?.commitments.length, showQuoteModal, quoteLoading, quoteCountdown, quote?.quote_expires_at, handleCreateQuote]);
 
   // =======================================================
   // LOCK QUOTE + START PAYMENT
