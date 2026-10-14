@@ -179,6 +179,16 @@ export default function CollectScreen() {
     }
   };
 
+  const handleCheckPaymentStatus = async () => {
+    try {
+      const result = await verifyAndStartPayouts();
+      applyVerificationResult(result);
+    } catch (e: any) {
+      setError(e?.message ?? 'Payment status is still being checked. Please do not pay again.');
+      setChargeStatus('processing');
+    }
+  };
+
   const handlePay = async () => {
     if (!paymentReference) {
       setError('This transaction has no payment reference. Please return to the plan and start payment again.');
