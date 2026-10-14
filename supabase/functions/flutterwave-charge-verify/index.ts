@@ -135,23 +135,21 @@ Deno.serve(async (req: Request) => {
         : [];
 
       if (matchingCharges.length !== 1) {
-        const createdAt = Date.parse(String(transaction.created_at ?? ""));
-        const oldPendingRequestHasNoProviderCharge =
-          matchingCharges.length === 0 &&
-          transaction.status === "pending" &&
-          Number.isFinite(createdAt) &&
-          Date.now() - createdAt > 30 * 60 * 1000;
-
-        if (oldPendingRequestHasNoProviderCharge) {
+        if (matchingCharges.length === 0 && transaction.status === "pending") {
           const { data: processingPlan } = await serviceClient
             .from("plans")
-            .select("id, status")
+            .select("id, status, updated_at")
             .eq("id", transaction.plan_id)
             .maybeSingle();
+          const lastPaymentStateChange = Date.parse(String(processingPlan?.updated_at ?? ""));
+          const oldPendingRequestHasNoProviderCharge =
+            processingPlan?.status === "payment_processing" &&
+            Number.isFinite(lastPaymentStateChange) &&
+            Date.now() - lastPaymentStateChange > 30 * 60 * 1000;
 
-          // A locked order is returned to the quote stage only after Flutterwave
-          // confirms there is no charge with this unique reference for 30+ min.
-          if (processingPlan?.status === "payment_processing") {
+          // The plan timestamp is updated when payment_processing begins. Using
+          // it avoids racing a new submission whose transaction itself is old.
+          if (oldPendingRequestHasNoProviderCharge) {
             const { data: failedTransaction, error: failTransactionError } = await serviceClient
               .from("transactions")
               .update({ status: "failed", idempotency_key: null })
