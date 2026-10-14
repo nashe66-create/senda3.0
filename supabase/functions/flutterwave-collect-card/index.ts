@@ -335,6 +335,9 @@ Deno.serve(async (req: Request) => {
     };
 
     const accessToken = await getAccessToken();
+    // From this point the provider may receive the request even if the network
+    // times out. Such outcomes must be reconciled, not marked as failed.
+    providerRequestStarted = true;
     const { response, data } = await flutterwaveRequest(
       accessToken, "POST", "/orchestration/direct-charges", chargePayload, idempotencyKey
     );
