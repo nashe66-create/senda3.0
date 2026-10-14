@@ -166,7 +166,7 @@ Deno.serve(async (req: Request) => {
     // Verify the transaction belongs to this user and get plan info
     const { data: transaction } = await supabase
       .from("transactions")
-      .select("id, plan_id, user_id, amount_gbp, payment_reference, status, idempotency_key")
+      .select("id, plan_id, user_id, amount_gbp, payment_reference, status, idempotency_key, flutterwave_charge_id")
       .eq("id", payload.transaction_id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -177,6 +177,17 @@ Deno.serve(async (req: Request) => {
 
     if (payload.reference !== transaction.payment_reference) {
       return jsonResponse({ success: false, error: "Payment reference does not match the transaction" }, 400);
+    }
+
+    // Never submit another charge when this transaction already has a charge
+    // ID, or when an earlier attempt is still pending with an idempotency key.
+    if (transaction.flutterwave_charge_id || (transaction.status === "pending" && transaction.idempotency_key)) {
+      return jsonResponse({
+        success: false,
+        error: "This payment was already submitted and is being checked. Do not submit it again.",
+        error_code: "PAYMENT_REQUIRES_RECONCILIATION",
+        charge_id: transaction.flutterwave_charge_id ?? null,
+      }, 409);
     }
 
     // Verify the plan is in awaiting_payment status and quote is locked
