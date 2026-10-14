@@ -243,7 +243,7 @@ Deno.serve(async (req: Request) => {
           .from("plans")
           .update({ payment_status: "successful", status: "funded" })
           .eq("id", transaction.plan_id)
-          .in("status", ["awaiting_payment", "payment_processing"]);
+          .in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
       } else {
         // The provider reports a successful charge, but one of Senda's
         // amount/currency/quote checks failed. Never label a potentially
