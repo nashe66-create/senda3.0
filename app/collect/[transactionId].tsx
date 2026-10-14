@@ -89,13 +89,17 @@ export default function CollectScreen() {
         } else if (data.next_action_type === 'redirect_url') {
           // The full provider URL is retrieved securely by the verification endpoint.
           setChargeStatus('processing');
+          setPollPaymentStatus(true);
         } else if (data.status === 'successful') {
           setChargeStatus('succeeded');
+          setPollPaymentStatus(false);
         } else if (data.status === 'failed') {
           setChargeStatus('failed');
+          setPollPaymentStatus(false);
         } else if (data.plan?.status === 'payment_processing' || data.flutterwave_charge_id) {
           // Resume verification instead of asking the customer to submit their card again.
           setChargeStatus('processing');
+          setPollPaymentStatus(true);
         }
       } catch (e: any) {
         setError(e?.message ?? 'Failed to load transaction');
