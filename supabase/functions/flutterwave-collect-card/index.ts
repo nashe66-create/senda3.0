@@ -121,6 +121,13 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  let recoveryContext: {
+    transactionId: string;
+    planId: string;
+    mayFailSafelyBeforeProvider: boolean;
+  } | null = null;
+  let providerRequestStarted = false;
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
