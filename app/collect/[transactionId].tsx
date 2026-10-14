@@ -316,6 +316,7 @@ export default function CollectScreen() {
       setError(definitelyNotSubmitted
         ? message
         : 'We could not confirm whether the payment request reached the provider. Senda is checking its status; do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
       setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
