@@ -5,3 +5,37 @@ channel = "stable-25_05"
 
 [agent]
 expertMode = true
+
+[userenv]
+
+[userenv.shared]
+EXPO_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZxbGF4bWVxeXJ3cWh0amthcHh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MzY1OTYsImV4cCI6MjEwMjAxMjU5Nn0.NwpaubA5kLHzMaYQNiKu_6TeYwo6qOyEm9KirUJxnk4"
+EXPO_PUBLIC_SUPABASE_URL = "https://fqlaxmeqyrwqhtjkapxx.supabase.co"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev:web"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
