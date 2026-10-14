@@ -250,6 +250,7 @@ Deno.serve(async (req: Request) => {
       verified,
       status: dbStatus,
       charge_status: chargeStatus,
+      next_action: chargeData.next_action ?? null,
       amount_matches: amountMatches,
       reference_matches: referenceMatches,
     });
