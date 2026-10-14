@@ -365,6 +365,7 @@ export default function CollectScreen() {
       const message = e?.message ?? 'The authorisation status is uncertain.';
       const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
       setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
       setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
@@ -403,6 +404,7 @@ export default function CollectScreen() {
       const message = e?.message ?? 'OTP authorisation status is uncertain.';
       const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
       setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
       setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
@@ -442,6 +444,7 @@ export default function CollectScreen() {
       const message = e?.message ?? 'PIN authorisation status is uncertain.';
       const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
       setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
       setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
