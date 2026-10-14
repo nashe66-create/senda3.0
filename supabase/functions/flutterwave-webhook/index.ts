@@ -283,7 +283,7 @@ Deno.serve(async (req: Request) => {
                     .eq("id", transaction.id)
                     .eq("status", "pending");
                   await supabase.from("plans").update({ payment_status: "successful", status: "funded" })
-                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing"]);
+                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
                 } else {
                   // The provider says money was collected but Senda's validation
                   // did not pass. Preserve a pending state for reconciliation; never
