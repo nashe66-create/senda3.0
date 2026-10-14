@@ -461,7 +461,7 @@ export default function PlanDetailScreen() {
     }
   };
 
-  const handleCreateQuote = async () => {
+  const handleCreateQuote = useCallback(async () => {
     if (!plan) return;
     setQuoteLoading(true);
     setQuoteError(null);
@@ -501,7 +501,28 @@ export default function PlanDetailScreen() {
     } finally {
       setQuoteLoading(false);
     }
-  };
+  }, [plan, id]);
+
+  // Unpaid quotes expire quickly. Refresh them automatically when the user
+  // returns to an expired quoted plan, but never reprice a locked/in-payment order.
+  const autoRefreshedQuotePlanIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      loading ||
+      !plan ||
+      plan.status !== 'quoted' ||
+      !plan.quote_expires_at ||
+      new Date(plan.quote_expires_at).getTime() > Date.now() ||
+      plan.commitments.length === 0 ||
+      autoRefreshedQuotePlanIdRef.current === plan.id
+    ) {
+      return;
+    }
+
+    autoRefreshedQuotePlanIdRef.current = plan.id;
+    setShowQuoteModal(true);
+    void handleCreateQuote();
+  }, [loading, plan?.id, plan?.status, plan?.quote_expires_at, plan?.commitments.length, handleCreateQuote]);
 
   // =======================================================
   // LOCK QUOTE + START PAYMENT
