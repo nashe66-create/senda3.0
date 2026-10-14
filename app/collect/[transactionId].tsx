@@ -286,6 +286,12 @@ export default function CollectScreen() {
       });
 
       if (!result.success) {
+        if (result.error_code === 'PAYMENT_REQUIRES_RECONCILIATION') {
+          setError('This payment was already submitted. Senda is checking its status; do not pay again.');
+          setPollPaymentStatus(true);
+          setChargeStatus('processing');
+          return;
+        }
         setError(result.error ?? 'Payment failed');
         setPollPaymentStatus(false);
         setChargeStatus('failed');
