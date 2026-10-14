@@ -204,14 +204,6 @@ Deno.serve(async (req: Request) => {
         success: false, error: "Quote must be locked before payment", error_code: "QUOTE_NOT_LOCKED" }, 400);
     }
 
-    if (!plan.quote_expires_at || new Date(plan.quote_expires_at).getTime() <= Date.now()) {
-      return jsonResponse({
-        success: false,
-        error: "This quote has expired. Please create a new quote before paying.",
-        error_code: "QUOTE_EXPIRED",
-      }, 409);
-    }
-
     // Verify the charge amount matches the locked customer_pays
     if (Math.abs(Number(payload.amount) - Number(plan.customer_pays)) > 0.01) {
       return jsonResponse({
@@ -312,7 +304,7 @@ Deno.serve(async (req: Request) => {
           encrypted_expiry_year: encryptedExpiryYear,
         },
       },
-      redirect_url: "https://senda.app/payment/callback",
+      redirect_url: `${(Deno.env.get("SENDA_APP_URL") ?? "https://senda3.pages.dev").replace(/\/+$/, "")}/collect/${encodeURIComponent(payload.transaction_id)}?payment_return=1`,
       customer,
     };
 
