@@ -130,9 +130,16 @@ Deno.serve(async (req: Request) => {
         }, 502);
       }
 
-      const matchingCharges = Array.isArray(listResult.data?.data)
-        ? listResult.data.data.filter((item: any) => item?.reference === transaction.payment_reference && item?.id)
-        : [];
+      if (!Array.isArray(listResult.data?.data)) {
+        return jsonResponse({
+          success: false,
+          error: "Flutterwave returned an unexpected charge-list response",
+        }, 502);
+      }
+
+      const matchingCharges = listResult.data.data.filter(
+        (item: any) => item?.reference === transaction.payment_reference && item?.id,
+      );
 
       if (matchingCharges.length !== 1) {
         if (matchingCharges.length === 0 && transaction.status === "pending") {
