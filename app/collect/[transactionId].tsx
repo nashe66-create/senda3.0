@@ -481,8 +481,8 @@ export default function CollectScreen() {
             <AlertCircle color={Colors.error[500]} size={64} strokeWidth={1.5} />
             <Text style={styles.resultTitle}>Payment Failed</Text>
             <Text style={styles.resultDesc}>{error ?? 'Your payment could not be processed. Please try again.'}</Text>
-            <Button onPress={() => { setChargeStatus('idle'); setError(null); }} style={styles.actionBtn}>
-              <Text style={styles.btnText}>Try Again</Text>
+            <Button onPress={() => router.replace(planId ? `/plan/${planId}` : '/(tabs)')} style={styles.actionBtn}>
+              <Text style={styles.btnText}>Return to transfer</Text>
             </Button>
           </View>
         ) : (
