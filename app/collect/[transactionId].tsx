@@ -241,8 +241,9 @@ export default function CollectScreen() {
       } else if (result.next_action?.type === 'requires_additional_fields') {
         setChargeStatus('requires_additional_fields');
       } else if (result.next_action?.type === 'redirect_url') {
+        setNextAction(result.next_action);
         setChargeStatus('redirect');
-        setError('Redirect-based 3DS authentication is not yet supported in this build.');
+        setError(null);
       } else {
         const verifyResult = await verifyAndStartPayouts();
         applyVerificationResult(verifyResult);
