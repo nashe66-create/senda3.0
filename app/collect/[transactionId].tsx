@@ -410,6 +410,18 @@ export default function CollectScreen() {
               <Text style={styles.btnText}>Done</Text>
             </Button>
           </View>
+        ) : chargeStatus === 'redirect' ? (
+          <View style={styles.resultContainer}>
+            <Lock color={Colors.primary[600]} size={56} strokeWidth={1.5} />
+            <Text style={styles.resultTitle}>Complete secure authentication</Text>
+            <Text style={styles.resultDesc}>
+              Your card provider needs you to confirm this payment. Complete the secure step to return to Senda. Do not start another payment.
+            </Text>
+            {error && <Text style={styles.errorText}>{error}</Text>}
+            <Button onPress={handleOpenRedirectAuthentication} style={styles.actionBtn}>
+              <Text style={styles.btnText}>Continue to secure authentication</Text>
+            </Button>
+          </View>
         ) : chargeStatus === 'processing' ? (
           <View style={styles.resultContainer}>
             <Loader color={Colors.primary[600]} size={56} strokeWidth={1.5} />
