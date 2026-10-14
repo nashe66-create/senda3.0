@@ -113,12 +113,60 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Transaction not found" }, 404);
     }
 
-    if (!transaction.flutterwave_charge_id) {
-      return jsonResponse({ success: false, error: "No charge ID found for this transaction" }, 400);
+    const accessToken = await getAccessToken();
+    let chargeId = transaction.flutterwave_charge_id;
+
+    // Recover the provider charge for previously submitted requests where the
+    // app lost the charge ID. Match the provider's unique reference exactly.
+    if (!chargeId && transaction.payment_reference) {
+      const listResult = await flutterwaveGet(
+        accessToken,
+        `/charges?reference=${encodeURIComponent(transaction.payment_reference)}&size=10`,
+      );
+      if (!listResult.ok) {
+        return jsonResponse({
+          success: false,
+          error: "Failed to look up the payment with Flutterwave",
+        }, 502);
+      }
+
+      const matchingCharges = Array.isArray(listResult.data?.data)
+        ? listResult.data.data.filter((item: any) => item?.reference === transaction.payment_reference && item?.id)
+        : [];
+
+      if (matchingCharges.length !== 1) {
+        return jsonResponse({
+          success: true,
+          verified: false,
+          status: transaction.status,
+          charge_status: "pending",
+          charge_lookup: matchingCharges.length === 0 ? "not_found_yet" : "ambiguous",
+        });
+      }
+
+      chargeId = String(matchingCharges[0].id);
+      const { error: saveChargeIdError } = await serviceClient
+        .from("transactions")
+        .update({ flutterwave_charge_id: chargeId })
+        .eq("id", transactionId)
+        .is("flutterwave_charge_id", null);
+      if (saveChargeIdError) {
+        console.error("Could not save recovered Flutterwave charge ID:", saveChargeIdError);
+        return jsonResponse({ success: false, error: "Payment was found but could not be linked safely" }, 500);
+      }
     }
 
-    const accessToken = await getAccessToken();
-    const { ok, data } = await flutterwaveGet(accessToken, `/charges/${transaction.flutterwave_charge_id}`);
+    if (!chargeId) {
+      return jsonResponse({
+        success: true,
+        verified: false,
+        status: transaction.status,
+        charge_status: "pending",
+        charge_lookup: "missing_reference",
+      });
+    }
+
+    const { ok, data } = await flutterwaveGet(accessToken, `/charges/${encodeURIComponent(chargeId)}`);
 
     if (!ok) {
       return jsonResponse({
@@ -155,13 +203,17 @@ Deno.serve(async (req: Request) => {
           .eq("id", transaction.plan_id)
           .in("status", ["awaiting_payment", "payment_processing"]);
       } else {
-        dbStatus = "failed";
-        verified = true;
-        await serviceClient
-          .from("plans")
-          .update({ payment_status: "failed", status: "payment_failed" })
-          .eq("id", transaction.plan_id)
-          .in("status", ["awaiting_payment", "payment_processing"]);
+        // The provider reports a successful charge, but one of Senda's
+        // amount/currency/quote checks failed. Never label a potentially
+        // collected payment as a normal failure or permit another payment.
+        console.error("Flutterwave charge requires payment reconciliation", {
+          transaction_id: transactionId,
+          charge_id: chargeId,
+          amount_matches: amountMatches,
+          quote_amount_matches: Boolean(amountMatchesQuote),
+          currency_matches: currencyMatches,
+          quote_locked: Boolean(plan?.quote_locked_at),
+        });
       }
     } else if (chargeStatus === "failed") {
       dbStatus = "failed";
