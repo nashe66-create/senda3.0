@@ -93,6 +93,10 @@ export default function CollectScreen() {
         } else if (data.status === 'successful') {
           setChargeStatus('succeeded');
           setPollPaymentStatus(false);
+        } else if (data.status === 'failed' && data.plan?.status === 'payment_failed') {
+          // Verify older failed records against Flutterwave before offering another payment.
+          setChargeStatus('processing');
+          setPollPaymentStatus(true);
         } else if (data.status === 'failed') {
           setChargeStatus('failed');
           setPollPaymentStatus(false);
