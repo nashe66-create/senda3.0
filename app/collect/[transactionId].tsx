@@ -233,7 +233,12 @@ export default function CollectScreen() {
       return;
     }
     try {
-      await Linking.openURL(candidate);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        // Keep bank authentication and its return URL inside the current PWA tab.
+        window.location.assign(candidate);
+      } else {
+        await Linking.openURL(candidate);
+      }
     } catch {
       setError('Could not open the secure authentication page. Please try opening it again; do not start another payment.');
     }
