@@ -164,6 +164,21 @@ export default function CollectScreen() {
     };
   }, [chargeStatus, transactionId, planId]);
 
+  const applyVerificationResult = (result: Awaited<ReturnType<typeof verifyCharge>>) => {
+    if (result.verified && result.status === 'successful') {
+      setError(null);
+      setChargeStatus('succeeded');
+    } else if (result.verified && result.status === 'failed' && result.charge_status !== 'succeeded') {
+      setError('The payment provider confirmed that this payment did not succeed. Check the details before trying again.');
+      setChargeStatus('failed');
+    } else {
+      setChargeStatus('processing');
+      setError(result.charge_status === 'succeeded'
+        ? 'The provider has reported a payment, but Senda is still reconciling it. Do not pay again while this message is shown.'
+        : 'Your payment is being confirmed. Please do not submit it again.');
+    }
+  };
+
   const handlePay = async () => {
     if (!paymentReference) {
       setError('This transaction has no payment reference. Please return to the plan and start payment again.');
@@ -201,12 +216,7 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        if (verifyResult.verified) {
-          setChargeStatus('succeeded');
-        } else {
-          setChargeStatus('failed');
-          setError('Payment could not be verified');
-        }
+        applyVerificationResult(verifyResult);
         return;
       }
 
@@ -225,7 +235,7 @@ export default function CollectScreen() {
         setError('Redirect-based 3DS authentication is not yet supported in this build.');
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
       setError(e?.message ?? 'Payment failed');
@@ -259,8 +269,7 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
-        if (!verifyResult.verified) setError('Payment could not be verified');
+        applyVerificationResult(verifyResult);
       } else if (result.next_action?.type === 'requires_otp') {
         setChargeStatus('requires_otp');
         setShowOtpModal(true);
@@ -269,8 +278,7 @@ export default function CollectScreen() {
         setShowPinModal(true);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
-        if (!verifyResult.verified) setError('Payment could not be verified');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
       setError(e?.message ?? 'We could not verify the billing details');
@@ -300,13 +308,13 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       } else if (result.next_action?.type === 'requires_pin') {
         setChargeStatus('requires_pin');
         setShowPinModal(true);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
       setError(e?.message ?? 'OTP verification failed');
@@ -337,13 +345,13 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       } else if (result.next_action?.type === 'requires_otp') {
         setChargeStatus('requires_otp');
         setShowOtpModal(true);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
       setError(e?.message ?? 'PIN verification failed');
