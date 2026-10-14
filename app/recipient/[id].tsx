@@ -183,8 +183,6 @@ export default function RecipientDetailScreen() {
       next_run_date?: string;
       pricing_mode?: string;
       source_amount?: string;
-      selected_recipient_ids?: string;
-      recipient_amounts?: string;
     }>();
 
   const isNew =
@@ -1257,8 +1255,6 @@ export default function RecipientDetailScreen() {
               next_run_date,
               pricing_mode,
               source_amount,
-              selected_recipient_ids,
-              recipient_amounts,
             },
           });
           return;
