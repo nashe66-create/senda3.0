@@ -249,6 +249,14 @@ Deno.serve(async (req: Request) => {
       }, 403);
     }
 
+    recoveryContext = {
+      transactionId: transaction.id,
+      planId: transaction.plan_id,
+      mayFailSafelyBeforeProvider: transaction.status === "pending"
+        && !transaction.idempotency_key
+        && !transaction.flutterwave_charge_id,
+    };
+
     // The KYC gate has passed; atomically claim the single payment initiation.
     if (plan.status === "awaiting_payment" || plan.status === "payment_failed") {
       const { data: claimedPlan, error: claimError } = await serviceClient
