@@ -43,6 +43,7 @@ export default function CollectScreen() {
   const [billingPostalCode, setBillingPostalCode] = useState('');
 
   const [chargeStatus, setChargeStatus] = useState<'idle' | 'processing' | 'requires_otp' | 'requires_pin' | 'requires_additional_fields' | 'redirect' | 'succeeded' | 'failed'>('idle');
+  const [pollPaymentStatus, setPollPaymentStatus] = useState(false);
   const [nextAction, setNextAction] = useState<any>(null);
   const [otpInput, setOtpInput] = useState('');
   const [pinInput, setPinInput] = useState('');
