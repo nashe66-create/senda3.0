@@ -1218,6 +1218,8 @@ export async function verifyCharge(transactionId: string): Promise<{
   verified?: boolean;
   status?: string;
   charge_status?: string;
+  next_action?: any;
+  charge_lookup?: string;
   error?: string;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
