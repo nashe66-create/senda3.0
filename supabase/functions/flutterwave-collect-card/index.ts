@@ -343,22 +343,54 @@ Deno.serve(async (req: Request) => {
     );
 
     if (!response.ok) {
-      console.error("Flutterwave direct charge failed", {
+      const providerChargeId = data?.data?.id ?? null;
+      const providerStatus = String(data?.data?.status ?? "").toLowerCase();
+      console.error("Flutterwave direct charge did not return a successful HTTP response", {
         endpoint: "/orchestration/direct-charges",
         status: response.status,
         error_code: data?.error?.code ?? data?.code ?? null,
         error_message: data?.error?.message ?? data?.message ?? null,
         error_type: data?.error?.type ?? null,
+        has_charge_id: Boolean(providerChargeId),
+        provider_status: providerStatus || null,
       });
+
+      // A definite provider-declared failure is terminal. A conflict, server
+      // error, or response carrying a charge ID is ambiguous and must be
+      // reconciled by reference instead of inviting a duplicate payment.
+      if (providerStatus === "failed" || (!providerChargeId && response.status >= 400 && response.status < 500 && response.status !== 409)) {
+        await serviceClient
+          .from("transactions")
+          .update({ status: "failed" })
+          .eq("id", payload.transaction_id);
+        await serviceClient
+          .from("plans")
+          .update({ status: "payment_failed", payment_status: "failed" })
+          .eq("id", transaction.plan_id)
+          .eq("status", "payment_processing");
+        return jsonResponse({
+          success: false,
+          status: "failed",
+          error: data?.error?.message ?? data?.message ?? "Flutterwave rejected the payment request",
+        }, response.status);
+      }
+
       await serviceClient
         .from("transactions")
-        .update({ status: "failed" })
+        .update({
+          flutterwave_charge_id: providerChargeId,
+          next_action_type: data?.data?.next_action?.type ?? null,
+        })
         .eq("id", payload.transaction_id);
-      await serviceClient
-        .from("plans")
-        .update({ status: "payment_failed", payment_status: "failed" })
-        .eq("id", transaction.plan_id)
-        .eq("status", "payment_processing");
+
+      return jsonResponse({
+        success: true,
+        status: providerStatus || "pending",
+        charge_id: providerChargeId,
+        next_action: data?.data?.next_action ?? null,
+        confirmation_pending: true,
+        error: "The provider did not confirm the final payment state. Senda is checking the payment; do not submit it again.",
+      }, 202);
     }
 
     // Store charge ID and next_action on the transaction
