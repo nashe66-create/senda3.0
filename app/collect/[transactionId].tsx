@@ -189,6 +189,23 @@ export default function CollectScreen() {
     }
   };
 
+  const handleOpenRedirectAuthentication = async () => {
+    const candidate =
+      nextAction?.redirect_url?.url ??
+      nextAction?.redirect_url ??
+      nextAction?.url ??
+      null;
+    if (typeof candidate !== 'string' || !candidate.startsWith('https://')) {
+      setError('The secure authentication link is missing. Your payment is not being resubmitted; please contact support.');
+      return;
+    }
+    try {
+      await Linking.openURL(candidate);
+    } catch {
+      setError('Could not open the secure authentication page. Please try opening it again; do not start another payment.');
+    }
+  };
+
   const handlePay = async () => {
     if (!paymentReference) {
       setError('This transaction has no payment reference. Please return to the plan and start payment again.');
