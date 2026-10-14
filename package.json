@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "EXPO_NO_TELEMETRY=1 expo start --tunnel --go",
-    "dev:local": "EXPO_NO_TELEMETRY=1 expo start",
-    "dev:web": "BROWSER=none CI=1 EXPO_NO_TELEMETRY=1 expo start --web --host lan --port 5000",
+    "dev": "expo start --tunnel --go",
+    "dev:local": "expo start",
+    "dev:web": "expo start --web --host lan --port 5000",
     "build:web": "expo export --platform web",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern node_modules",
     "typecheck": "tsc --noEmit"
