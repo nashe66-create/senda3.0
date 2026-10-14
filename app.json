@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "bolt-expo-nativewind",
+    "name": "Senda",
     "slug": "bolt-expo-nativewind",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -13,7 +13,13 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "Senda",
+      "shortName": "Senda",
+      "display": "standalone",
+      "startUrl": "/",
+      "themeColor": "#2456A6",
+      "backgroundColor": "#F8F9FC"
     },
     "plugins": [
       "expo-router",
