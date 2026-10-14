@@ -85,6 +85,9 @@ export default function CollectScreen() {
           setShowPinModal(true);
         } else if (data.next_action_type === 'requires_additional_fields') {
           setChargeStatus('requires_additional_fields');
+        } else if (data.next_action_type === 'redirect_url') {
+          // The full provider URL is retrieved securely by the verification endpoint.
+          setChargeStatus('processing');
         } else if (data.status === 'successful') {
           setChargeStatus('succeeded');
         } else if (data.status === 'failed') {
@@ -138,6 +141,13 @@ export default function CollectScreen() {
               console.error('Automatic payout orchestration did not start:', payoutResult.error);
             }
           }
+          return;
+        }
+
+        if (result.next_action?.type === 'redirect_url') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('redirect');
           return;
         }
 
