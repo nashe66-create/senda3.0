@@ -89,6 +89,9 @@ export default function CollectScreen() {
           setChargeStatus('succeeded');
         } else if (data.status === 'failed') {
           setChargeStatus('failed');
+        } else if (data.plan?.status === 'payment_processing' || data.flutterwave_charge_id) {
+          // Resume verification instead of asking the customer to submit their card again.
+          setChargeStatus('processing');
         }
       } catch (e: any) {
         setError(e?.message ?? 'Failed to load transaction');
