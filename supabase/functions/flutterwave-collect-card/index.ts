@@ -121,6 +121,13 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  let recoveryContext: {
+    transactionId: string;
+    planId: string;
+    mayFailSafelyBeforeProvider: boolean;
+  } | null = null;
+  let providerRequestStarted = false;
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -166,7 +173,7 @@ Deno.serve(async (req: Request) => {
     // Verify the transaction belongs to this user and get plan info
     const { data: transaction } = await supabase
       .from("transactions")
-      .select("id, plan_id, user_id, amount_gbp, payment_reference, status, idempotency_key")
+      .select("id, plan_id, user_id, amount_gbp, payment_reference, status, idempotency_key, flutterwave_charge_id")
       .eq("id", payload.transaction_id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -177,6 +184,17 @@ Deno.serve(async (req: Request) => {
 
     if (payload.reference !== transaction.payment_reference) {
       return jsonResponse({ success: false, error: "Payment reference does not match the transaction" }, 400);
+    }
+
+    // Never submit another charge when this transaction already has a charge
+    // ID, or when an earlier attempt is still pending with an idempotency key.
+    if (transaction.flutterwave_charge_id || (transaction.status === "pending" && transaction.idempotency_key)) {
+      return jsonResponse({
+        success: false,
+        error: "This payment was already submitted and is being checked. Do not submit it again.",
+        error_code: "PAYMENT_REQUIRES_RECONCILIATION",
+        charge_id: transaction.flutterwave_charge_id ?? null,
+      }, 409);
     }
 
     // Verify the plan is in awaiting_payment status and quote is locked
@@ -202,14 +220,6 @@ Deno.serve(async (req: Request) => {
     if (!plan.quote_locked_at) {
       return jsonResponse({
         success: false, error: "Quote must be locked before payment", error_code: "QUOTE_NOT_LOCKED" }, 400);
-    }
-
-    if (!plan.quote_expires_at || new Date(plan.quote_expires_at).getTime() <= Date.now()) {
-      return jsonResponse({
-        success: false,
-        error: "This quote has expired. Please create a new quote before paying.",
-        error_code: "QUOTE_EXPIRED",
-      }, 409);
     }
 
     // Verify the charge amount matches the locked customer_pays
@@ -238,6 +248,14 @@ Deno.serve(async (req: Request) => {
         error: "Payment cannot proceed until authoritative KYC verification is available.",
       }, 403);
     }
+
+    recoveryContext = {
+      transactionId: transaction.id,
+      planId: transaction.plan_id,
+      mayFailSafelyBeforeProvider: transaction.status === "pending"
+        && !transaction.idempotency_key
+        && !transaction.flutterwave_charge_id,
+    };
 
     // The KYC gate has passed; atomically claim the single payment initiation.
     if (plan.status === "awaiting_payment" || plan.status === "payment_failed") {
@@ -271,7 +289,7 @@ Deno.serve(async (req: Request) => {
     ]);
 
     // Deterministic idempotency key
-    const idempotencyKey = transaction.idempotency_key ?? `SENDA-PAY-${transaction.plan_id}`;
+    const idempotencyKey = transaction.idempotency_key ?? `SENDA-PAY-${transaction.id}`;
 
     const { error: idempotencyError } = await serviceClient
       .from("transactions")
@@ -312,32 +330,67 @@ Deno.serve(async (req: Request) => {
           encrypted_expiry_year: encryptedExpiryYear,
         },
       },
-      redirect_url: "https://senda.app/payment/callback",
+      redirect_url: `${(Deno.env.get("SENDA_APP_URL") ?? "https://senda3.pages.dev").replace(/\/+$/, "")}/collect/${encodeURIComponent(payload.transaction_id)}?payment_return=1`,
       customer,
     };
 
     const accessToken = await getAccessToken();
+    // From this point the provider may receive the request even if the network
+    // times out. Such outcomes must be reconciled, not marked as failed.
+    providerRequestStarted = true;
     const { response, data } = await flutterwaveRequest(
       accessToken, "POST", "/orchestration/direct-charges", chargePayload, idempotencyKey
     );
 
     if (!response.ok) {
-      console.error("Flutterwave direct charge failed", {
+      const providerChargeId = data?.data?.id ?? null;
+      const providerStatus = String(data?.data?.status ?? "").toLowerCase();
+      console.error("Flutterwave direct charge did not return a successful HTTP response", {
         endpoint: "/orchestration/direct-charges",
         status: response.status,
         error_code: data?.error?.code ?? data?.code ?? null,
         error_message: data?.error?.message ?? data?.message ?? null,
         error_type: data?.error?.type ?? null,
+        has_charge_id: Boolean(providerChargeId),
+        provider_status: providerStatus || null,
       });
+
+      // A definite provider-declared failure is terminal. A conflict, server
+      // error, or response carrying a charge ID is ambiguous and must be
+      // reconciled by reference instead of inviting a duplicate payment.
+      if (providerStatus === "failed" || (!providerChargeId && response.status >= 400 && response.status < 500 && response.status !== 409)) {
+        await serviceClient
+          .from("transactions")
+          .update({ status: "failed" })
+          .eq("id", payload.transaction_id);
+        await serviceClient
+          .from("plans")
+          .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
+          .eq("id", transaction.plan_id)
+          .eq("status", "payment_processing");
+        return jsonResponse({
+          success: false,
+          status: "failed",
+          error: data?.error?.message ?? data?.message ?? "Flutterwave rejected the payment request",
+        }, response.status);
+      }
+
       await serviceClient
         .from("transactions")
-        .update({ status: "failed" })
+        .update({
+          flutterwave_charge_id: providerChargeId,
+          next_action_type: data?.data?.next_action?.type ?? null,
+        })
         .eq("id", payload.transaction_id);
-      await serviceClient
-        .from("plans")
-        .update({ status: "payment_failed", payment_status: "failed" })
-        .eq("id", transaction.plan_id)
-        .eq("status", "payment_processing");
+
+      return jsonResponse({
+        success: true,
+        status: providerStatus || "pending",
+        charge_id: providerChargeId,
+        next_action: data?.data?.next_action ?? null,
+        confirmation_pending: true,
+        error: "The provider did not confirm the final payment state. Senda is checking the payment; do not submit it again.",
+      }, 202);
     }
 
     // Store charge ID and next_action on the transaction
@@ -366,6 +419,44 @@ Deno.serve(async (req: Request) => {
     }, response.status);
   } catch (error) {
     console.error("Flutterwave collect-card error:", error);
+
+    // If the request may have reached Flutterwave, leave it pending so the
+    // verification endpoint can recover it by the unique payment reference.
+    if (recoveryContext && (providerRequestStarted || !recoveryContext.mayFailSafelyBeforeProvider)) {
+      return jsonResponse({
+        success: true,
+        status: "pending",
+        charge_id: null,
+        next_action: null,
+        confirmation_pending: true,
+        error: "The payment request may have reached Flutterwave. Senda is checking its status; do not submit it again.",
+      }, 202);
+    }
+
+    // Only roll back when we know no prior attempt existed and no provider
+    // request was started. Never overwrite a status already changed by a webhook.
+    if (recoveryContext?.mayFailSafelyBeforeProvider) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL");
+        const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        if (supabaseUrl && serviceRoleKey) {
+          const cleanupClient = createClient(supabaseUrl, serviceRoleKey);
+          await cleanupClient
+            .from("transactions")
+            .update({ status: "failed", idempotency_key: null })
+            .eq("id", recoveryContext.transactionId)
+            .eq("status", "pending");
+          await cleanupClient
+            .from("plans")
+            .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
+            .eq("id", recoveryContext.planId)
+            .eq("status", "payment_processing");
+        }
+      } catch (cleanupError) {
+        console.error("Could not safely restore pre-payment state:", cleanupError);
+      }
+    }
+
     return jsonResponse({
       success: false,
       error: error instanceof Error ? error.message : "Unexpected error",

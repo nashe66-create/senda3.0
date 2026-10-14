@@ -283,21 +283,32 @@ Deno.serve(async (req: Request) => {
                     .eq("id", transaction.id)
                     .eq("status", "pending");
                   await supabase.from("plans").update({ payment_status: "successful", status: "funded" })
-                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing"]);
+                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
                 } else {
-                  await supabase.from("transactions").update({ status: "failed" }).eq("id", transaction.id);
-                  await supabase.from("plans").update({ payment_status: "failed", status: "payment_failed" })
-                    .eq("id", transaction.plan_id).in("status", ["awaiting_payment", "payment_processing"]);
+                  // The provider says money was collected but Senda's validation
+                  // did not pass. Preserve a pending state for reconciliation; never
+                  // tell the customer to pay again for a potentially successful charge.
+                  console.error("Flutterwave succeeded charge requires reconciliation", {
+                    transaction_id: transaction.id,
+                    charge_id: String(chargeId),
+                    amount_matches: Boolean(amountMatches),
+                    reference_matches: referenceMatches,
+                    currency_matches: currencyMatches,
+                    quote_locked: Boolean(plan?.quote_locked_at),
+                  });
+                  await supabase.from("transactions")
+                    .update({ flutterwave_charge_id: String(chargeId) })
+                    .eq("id", transaction.id)
+                    .eq("status", "pending");
                 }
               }
-            } else if (chargeStatus === "failed") {
+            } else if (chargeStatus === "failed" || chargeStatus === "voided") {
               await supabase
                 .from("transactions")
-                .update({ status: "failed" })
+                .update({ status: "failed", flutterwave_charge_id: String(chargeId) })
                 .eq("payment_reference", reference)
                 .eq("status", "pending");
 
-              // Transition plan to payment_failed
               const { data: transaction } = await supabase
                 .from("transactions")
                 .select("plan_id")
@@ -305,14 +316,12 @@ Deno.serve(async (req: Request) => {
                 .maybeSingle();
 
               if (transaction?.plan_id) {
+                // No money was collected, so release the lock and allow a fresh quote.
                 await supabase
                   .from("plans")
-                  .update({
-                    payment_status: "failed",
-                    status: "payment_failed",
-                  })
+                  .update({ payment_status: "pending", status: "quoted", quote_locked_at: null })
                   .eq("id", transaction.plan_id)
-                  .in("status", ["awaiting_payment", "payment_processing"]);
+                  .in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
               }
             }
           }

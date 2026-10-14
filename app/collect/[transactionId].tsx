@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   TouchableOpacity,
   Modal,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, CreditCard, Lock, CheckCircle2, AlertCircle, Loader } from 'lucide-react-native';
@@ -42,11 +43,13 @@ export default function CollectScreen() {
   const [billingPostalCode, setBillingPostalCode] = useState('');
 
   const [chargeStatus, setChargeStatus] = useState<'idle' | 'processing' | 'requires_otp' | 'requires_pin' | 'requires_additional_fields' | 'redirect' | 'succeeded' | 'failed'>('idle');
+  const [pollPaymentStatus, setPollPaymentStatus] = useState(false);
   const [nextAction, setNextAction] = useState<any>(null);
   const [otpInput, setOtpInput] = useState('');
   const [pinInput, setPinInput] = useState('');
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
+  const payoutStartedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -83,10 +86,24 @@ export default function CollectScreen() {
           setShowPinModal(true);
         } else if (data.next_action_type === 'requires_additional_fields') {
           setChargeStatus('requires_additional_fields');
+        } else if (data.next_action_type === 'redirect_url') {
+          // The full provider URL is retrieved securely by the verification endpoint.
+          setChargeStatus('processing');
+          setPollPaymentStatus(true);
         } else if (data.status === 'successful') {
           setChargeStatus('succeeded');
+          setPollPaymentStatus(false);
+        } else if (data.status === 'failed' && data.plan?.status === 'payment_failed') {
+          // Verify older failed records against Flutterwave before offering another payment.
+          setChargeStatus('processing');
+          setPollPaymentStatus(true);
         } else if (data.status === 'failed') {
           setChargeStatus('failed');
+          setPollPaymentStatus(false);
+        } else if (data.plan?.status === 'payment_processing' || data.flutterwave_charge_id) {
+          // Resume verification instead of asking the customer to submit their card again.
+          setChargeStatus('processing');
+          setPollPaymentStatus(true);
         }
       } catch (e: any) {
         setError(e?.message ?? 'Failed to load transaction');
@@ -98,13 +115,145 @@ export default function CollectScreen() {
 
   const verifyAndStartPayouts = async () => {
     const verifyResult = await verifyCharge(transactionId);
-    if (verifyResult.verified && planId) {
+    if (verifyResult.verified && verifyResult.status === 'successful' && planId && !payoutStartedRef.current) {
+      payoutStartedRef.current = true;
       const payoutResult = await startPayoutOrchestration(planId);
       if (!payoutResult.success) {
+        payoutStartedRef.current = false;
         console.error('Automatic payout orchestration did not start:', payoutResult.error);
       }
     }
     return verifyResult;
+  };
+
+  // A charge can stay pending while the provider completes authorisation.
+  // Poll until it reaches a terminal state; never ask the customer to pay twice.
+  useEffect(() => {
+    if (chargeStatus !== 'processing' || !transactionId || !pollPaymentStatus) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const checkStatus = async () => {
+      try {
+        const result = await verifyCharge(transactionId);
+        if (cancelled) return;
+
+        if (result.verified && result.status === 'successful') {
+          setError(null);
+          setChargeStatus('succeeded');
+          if (planId && !payoutStartedRef.current) {
+            payoutStartedRef.current = true;
+            const payoutResult = await startPayoutOrchestration(planId);
+            if (!payoutResult.success) {
+              payoutStartedRef.current = false;
+              console.error('Automatic payout orchestration did not start:', payoutResult.error);
+            }
+          }
+          return;
+        }
+
+        if (result.next_action?.type === 'requires_otp' || result.next_action?.type === 'otp') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('requires_otp');
+          setShowOtpModal(true);
+          return;
+        }
+
+        if (result.next_action?.type === 'requires_pin' || result.next_action?.type === 'pin') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('requires_pin');
+          setShowPinModal(true);
+          return;
+        }
+
+        if (result.next_action?.type === 'requires_additional_fields') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('requires_additional_fields');
+          return;
+        }
+
+        if (result.next_action?.type === 'redirect_url') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('redirect');
+          return;
+        }
+
+        if (result.verified && result.status === 'failed' && result.charge_status !== 'succeeded') {
+          setError('The payment provider confirmed that this payment did not succeed. Check the details before trying again.');
+          setChargeStatus('failed');
+          return;
+        }
+
+        if (result.charge_status === 'succeeded' && (!result.verified || result.status !== 'successful')) {
+          setError('The provider has reported a payment, but Senda is still reconciling it. Do not pay again while this message is shown.');
+        }
+      } catch (e) {
+        console.warn('Payment status check will be retried:', e);
+      }
+
+      if (!cancelled) timer = setTimeout(checkStatus, 10000);
+    };
+
+    void checkStatus();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [chargeStatus, transactionId, planId, pollPaymentStatus]);
+
+  const applyVerificationResult = (result: Awaited<ReturnType<typeof verifyCharge>>) => {
+    if (result.verified && result.status === 'successful') {
+      setError(null);
+      setPollPaymentStatus(false);
+      setChargeStatus('succeeded');
+    } else if (result.verified && result.status === 'failed' && result.charge_status !== 'succeeded') {
+      setError('The payment provider confirmed that this payment did not succeed. Check the details before trying again.');
+      setPollPaymentStatus(false);
+      setChargeStatus('failed');
+    } else {
+      setPollPaymentStatus(true);
+      setChargeStatus('processing');
+      setError(result.charge_status === 'succeeded'
+        ? 'The provider has reported a payment, but Senda is still reconciling it. Do not pay again while this message is shown.'
+        : 'Your payment is being confirmed. Please do not submit it again.');
+    }
+  };
+
+  const handleCheckPaymentStatus = async () => {
+    try {
+      const result = await verifyAndStartPayouts();
+      applyVerificationResult(result);
+    } catch (e: any) {
+      setError(e?.message ?? 'Payment status is still being checked. Please do not pay again.');
+      setChargeStatus('processing');
+    }
+  };
+
+  const handleOpenRedirectAuthentication = async () => {
+    const candidate =
+      nextAction?.redirect_url?.url ??
+      nextAction?.redirect_url ??
+      nextAction?.url ??
+      null;
+    if (typeof candidate !== 'string' || !candidate.startsWith('https://')) {
+      setError('The secure authentication link is missing. Your payment is not being resubmitted; please contact support.');
+      return;
+    }
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        // Keep bank authentication and its return URL inside the current PWA tab.
+        window.location.assign(candidate);
+      } else {
+        await Linking.openURL(candidate);
+      }
+    } catch {
+      setError('Could not open the secure authentication page. Please try opening it again; do not start another payment.');
+    }
   };
 
   const handlePay = async () => {
@@ -137,19 +286,22 @@ export default function CollectScreen() {
       });
 
       if (!result.success) {
+        if (result.error_code === 'PAYMENT_REQUIRES_RECONCILIATION') {
+          setError('This payment was already submitted. Senda is checking its status; do not pay again.');
+          setPollPaymentStatus(true);
+          setChargeStatus('processing');
+          return;
+        }
         setError(result.error ?? 'Payment failed');
+        setPollPaymentStatus(false);
         setChargeStatus('failed');
         return;
       }
 
+      setPollPaymentStatus(true);
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        if (verifyResult.verified) {
-          setChargeStatus('succeeded');
-        } else {
-          setChargeStatus('failed');
-          setError('Payment could not be verified');
-        }
+        applyVerificationResult(verifyResult);
         return;
       }
 
@@ -164,15 +316,21 @@ export default function CollectScreen() {
       } else if (result.next_action?.type === 'requires_additional_fields') {
         setChargeStatus('requires_additional_fields');
       } else if (result.next_action?.type === 'redirect_url') {
+        setNextAction(result.next_action);
         setChargeStatus('redirect');
-        setError('Redirect-based 3DS authentication is not yet supported in this build.');
+        setError(null);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Payment failed');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'Payment status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted
+        ? message
+        : 'We could not confirm whether the payment request reached the provider. Senda is checking its status; do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
@@ -202,8 +360,7 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
-        if (!verifyResult.verified) setError('Payment could not be verified');
+        applyVerificationResult(verifyResult);
       } else if (result.next_action?.type === 'requires_otp') {
         setChargeStatus('requires_otp');
         setShowOtpModal(true);
@@ -212,12 +369,14 @@ export default function CollectScreen() {
         setShowPinModal(true);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
-        if (!verifyResult.verified) setError('Payment could not be verified');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'We could not verify the billing details');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'The authorisation status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
@@ -243,17 +402,20 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       } else if (result.next_action?.type === 'requires_pin') {
         setChargeStatus('requires_pin');
         setShowPinModal(true);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'OTP verification failed');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'OTP authorisation status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
@@ -280,17 +442,20 @@ export default function CollectScreen() {
 
       if (result.status === 'succeeded') {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       } else if (result.next_action?.type === 'requires_otp') {
         setChargeStatus('requires_otp');
         setShowOtpModal(true);
       } else {
         const verifyResult = await verifyAndStartPayouts();
-        setChargeStatus(verifyResult.verified ? 'succeeded' : 'failed');
+        applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'PIN verification failed');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'PIN authorisation status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setPollPaymentStatus(!definitelyNotSubmitted);
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
@@ -317,13 +482,36 @@ export default function CollectScreen() {
               <Text style={styles.btnText}>Done</Text>
             </Button>
           </View>
+        ) : chargeStatus === 'redirect' ? (
+          <View style={styles.resultContainer}>
+            <Lock color={Colors.primary[600]} size={56} strokeWidth={1.5} />
+            <Text style={styles.resultTitle}>Complete secure authentication</Text>
+            <Text style={styles.resultDesc}>
+              Your card provider needs you to confirm this payment. Complete the secure step to return to Senda. Do not start another payment.
+            </Text>
+            {error && <Text style={styles.errorText}>{error}</Text>}
+            <Button onPress={handleOpenRedirectAuthentication} style={styles.actionBtn}>
+              <Text style={styles.btnText}>Continue to secure authentication</Text>
+            </Button>
+          </View>
+        ) : chargeStatus === 'processing' ? (
+          <View style={styles.resultContainer}>
+            <Loader color={Colors.primary[600]} size={56} strokeWidth={1.5} />
+            <Text style={styles.resultTitle}>Confirming your payment</Text>
+            <Text style={styles.resultDesc}>
+              {error ?? 'We are checking the payment provider for confirmation. Please do not submit the payment again.'}
+            </Text>
+            <Button onPress={handleCheckPaymentStatus} style={styles.actionBtn}>
+              <Text style={styles.btnText}>Check payment status</Text>
+            </Button>
+          </View>
         ) : chargeStatus === 'failed' ? (
           <View style={styles.resultContainer}>
             <AlertCircle color={Colors.error[500]} size={64} strokeWidth={1.5} />
             <Text style={styles.resultTitle}>Payment Failed</Text>
             <Text style={styles.resultDesc}>{error ?? 'Your payment could not be processed. Please try again.'}</Text>
-            <Button onPress={() => { setChargeStatus('idle'); setError(null); }} style={styles.actionBtn}>
-              <Text style={styles.btnText}>Try Again</Text>
+            <Button onPress={() => router.replace(planId ? `/plan/${planId}` : '/(tabs)')} style={styles.actionBtn}>
+              <Text style={styles.btnText}>Return to transfer</Text>
             </Button>
           </View>
         ) : (

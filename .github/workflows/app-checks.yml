@@ -1,0 +1,30 @@
+name: Senda app checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  app-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Export web prototype
+        run: npm run build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_build_check_only
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: build-check-only

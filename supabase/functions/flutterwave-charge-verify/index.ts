@@ -104,7 +104,7 @@ Deno.serve(async (req: Request) => {
     // Look up the charge ID from the transaction
     const { data: transaction } = await supabase
       .from("transactions")
-      .select("flutterwave_charge_id, amount_gbp, payment_reference, status, plan_id")
+      .select("flutterwave_charge_id, amount_gbp, payment_reference, status, plan_id, created_at")
       .eq("id", transactionId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -113,12 +113,112 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Transaction not found" }, 404);
     }
 
-    if (!transaction.flutterwave_charge_id) {
-      return jsonResponse({ success: false, error: "No charge ID found for this transaction" }, 400);
+    const accessToken = await getAccessToken();
+    let chargeId = transaction.flutterwave_charge_id;
+
+    // Recover the provider charge for previously submitted requests where the
+    // app lost the charge ID. Match the provider's unique reference exactly.
+    if (!chargeId && transaction.payment_reference) {
+      const listResult = await flutterwaveGet(
+        accessToken,
+        `/charges?reference=${encodeURIComponent(transaction.payment_reference)}&size=10`,
+      );
+      if (!listResult.ok) {
+        return jsonResponse({
+          success: false,
+          error: "Failed to look up the payment with Flutterwave",
+        }, 502);
+      }
+
+      if (!Array.isArray(listResult.data?.data)) {
+        return jsonResponse({
+          success: false,
+          error: "Flutterwave returned an unexpected charge-list response",
+        }, 502);
+      }
+
+      const matchingCharges = listResult.data.data.filter(
+        (item: any) => item?.reference === transaction.payment_reference && item?.id,
+      );
+
+      if (matchingCharges.length !== 1) {
+        if (matchingCharges.length === 0 && ["pending", "failed"].includes(transaction.status)) {
+          const { data: paymentPlan } = await serviceClient
+            .from("plans")
+            .select("id, status, updated_at")
+            .eq("id", transaction.plan_id)
+            .maybeSingle();
+          const lastPaymentStateChange = Date.parse(String(paymentPlan?.updated_at ?? ""));
+          const paymentStateIsRecoverable =
+            (paymentPlan?.status === "payment_processing" && transaction.status === "pending") ||
+            paymentPlan?.status === "payment_failed";
+          const oldPaymentAttempt =
+            paymentStateIsRecoverable &&
+            Number.isFinite(lastPaymentStateChange) &&
+            Date.now() - lastPaymentStateChange > 30 * 60 * 1000;
+
+          // Only reopen an old attempt if Flutterwave successfully returned an
+          // empty charge list for this exact unique reference.
+          if (oldPaymentAttempt) {
+            const { data: failedTransaction, error: failTransactionError } = await serviceClient
+              .from("transactions")
+              .update({ status: "failed", idempotency_key: null })
+              .eq("id", transactionId)
+              .in("status", ["pending", "failed"])
+              .is("flutterwave_charge_id", null)
+              .select("id")
+              .maybeSingle();
+
+            if (!failTransactionError && failedTransaction) {
+              await serviceClient
+                .from("plans")
+                .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
+                .eq("id", transaction.plan_id)
+                .in("status", ["payment_processing", "payment_failed"]);
+
+              return jsonResponse({
+                success: true,
+                verified: true,
+                status: "failed",
+                charge_status: "not_found",
+                charge_lookup: "not_found_after_grace_period",
+              });
+            }
+          }
+        }
+
+        return jsonResponse({
+          success: true,
+          verified: false,
+          status: transaction.status,
+          charge_status: "pending",
+          charge_lookup: matchingCharges.length === 0 ? "not_found_yet" : "ambiguous",
+        });
+      }
+
+      chargeId = String(matchingCharges[0].id);
+      const { error: saveChargeIdError } = await serviceClient
+        .from("transactions")
+        .update({ flutterwave_charge_id: chargeId })
+        .eq("id", transactionId)
+        .is("flutterwave_charge_id", null);
+      if (saveChargeIdError) {
+        console.error("Could not save recovered Flutterwave charge ID:", saveChargeIdError);
+        return jsonResponse({ success: false, error: "Payment was found but could not be linked safely" }, 500);
+      }
     }
 
-    const accessToken = await getAccessToken();
-    const { ok, data } = await flutterwaveGet(accessToken, `/charges/${transaction.flutterwave_charge_id}`);
+    if (!chargeId) {
+      return jsonResponse({
+        success: true,
+        verified: false,
+        status: transaction.status,
+        charge_status: "pending",
+        charge_lookup: "missing_reference",
+      });
+    }
+
+    const { ok, data } = await flutterwaveGet(accessToken, `/charges/${encodeURIComponent(chargeId)}`);
 
     if (!ok) {
       return jsonResponse({
@@ -153,17 +253,21 @@ Deno.serve(async (req: Request) => {
           .from("plans")
           .update({ payment_status: "successful", status: "funded" })
           .eq("id", transaction.plan_id)
-          .in("status", ["awaiting_payment", "payment_processing"]);
+          .in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
       } else {
-        dbStatus = "failed";
-        verified = true;
-        await serviceClient
-          .from("plans")
-          .update({ payment_status: "failed", status: "payment_failed" })
-          .eq("id", transaction.plan_id)
-          .in("status", ["awaiting_payment", "payment_processing"]);
+        // The provider reports a successful charge, but one of Senda's
+        // amount/currency/quote checks failed. Never label a potentially
+        // collected payment as a normal failure or permit another payment.
+        console.error("Flutterwave charge requires payment reconciliation", {
+          transaction_id: transactionId,
+          charge_id: chargeId,
+          amount_matches: amountMatches,
+          quote_amount_matches: Boolean(amountMatchesQuote),
+          currency_matches: currencyMatches,
+          quote_locked: Boolean(plan?.quote_locked_at),
+        });
       }
-    } else if (chargeStatus === "failed") {
+    } else if (chargeStatus === "failed" || chargeStatus === "voided") {
       dbStatus = "failed";
       verified = true;
     }
@@ -181,16 +285,16 @@ Deno.serve(async (req: Request) => {
         .update(updateData)
         .eq("id", transactionId);
 
-      if (dbStatus === "failed" && transaction.plan_id && chargeStatus === "failed") {
-        await serviceClient
-          .from("plans")
-          .update({
-            payment_status: "failed",
-            status: "payment_failed",
-          })
-          .eq("id", transaction.plan_id)
-          .in("status", ["awaiting_payment", "payment_processing"]);
-      }
+    }
+
+    if (dbStatus === "failed" && transaction.plan_id && (chargeStatus === "failed" || chargeStatus === "voided")) {
+      // The provider has confirmed no money was collected, so unlock the plan
+      // for a fresh quote/payment attempt instead of reusing the old transaction.
+      await serviceClient
+        .from("plans")
+        .update({ payment_status: "pending", status: "quoted", quote_locked_at: null })
+        .eq("id", transaction.plan_id)
+        .in("status", ["awaiting_payment", "payment_processing", "payment_failed"]);
     }
 
     return jsonResponse({
@@ -198,6 +302,7 @@ Deno.serve(async (req: Request) => {
       verified,
       status: dbStatus,
       charge_status: chargeStatus,
+      next_action: chargeData.next_action ?? null,
       amount_matches: amountMatches,
       reference_matches: referenceMatches,
     });

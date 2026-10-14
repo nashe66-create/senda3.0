@@ -343,32 +343,38 @@ export default function NewPlanScreen() {
                 eligibleRecipients.map((recipient) => {
                   const selected = selectedRecipientIds.includes(recipient.id);
                   return (
-                    <TouchableOpacity
+                    <View
                       key={recipient.id}
-                      onPress={() => toggleRecipient(recipient.id)}
                       style={[styles.personItem, selected && styles.personItemSelected]}
                     >
-                      <View style={styles.personInfo}>
-                        <Text style={styles.personName}>{recipient.name}</Text>
-                        <Text style={styles.personMeta}>{recipient.currency} · {recipient.receiving_method.replace('_', ' ')}</Text>
-                        {selected && (
-                          <View style={styles.personAmountWrap}>
-                            <Text style={styles.personAmountPrefix}>
-                              {pricingMode === 'fixed_source' ? '£' : `${recipient.currency} `}
-                            </Text>
-                            <TextInput
-                              style={styles.personAmountInput}
-                              value={recipientAmounts[recipient.id] || ''}
-                              onChangeText={(value) => setRecipientAmounts((amounts) => ({ ...amounts, [recipient.id]: value }))}
-                              placeholder="0.00"
-                              placeholderTextColor={Colors.neutral[400]}
-                              keyboardType="decimal-pad"
-                            />
-                          </View>
-                        )}
-                      </View>
-                      {selected && <CheckCircle2 color={Colors.primary[600]} size={20} strokeWidth={2} />}
-                    </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => toggleRecipient(recipient.id)}
+                        style={styles.personItemHeader}
+                        activeOpacity={0.75}
+                      >
+                        <View style={styles.personInfo}>
+                          <Text style={styles.personName}>{recipient.name}</Text>
+                          <Text style={styles.personMeta}>{recipient.currency} · {recipient.receiving_method.replace('_', ' ')}</Text>
+                        </View>
+                        {selected && <CheckCircle2 color={Colors.primary[600]} size={20} strokeWidth={2} />}
+                      </TouchableOpacity>
+                      {selected && (
+                        <View style={styles.personAmountWrap}>
+                          <Text style={styles.personAmountPrefix}>
+                            {pricingMode === 'fixed_source' ? '£' : `${recipient.currency} `}
+                          </Text>
+                          <TextInput
+                            style={styles.personAmountInput}
+                            value={recipientAmounts[recipient.id] || ''}
+                            onChangeText={(value) => setRecipientAmounts((amounts) => ({ ...amounts, [recipient.id]: value }))}
+                            placeholder="0.00"
+                            placeholderTextColor={Colors.neutral[400]}
+                            keyboardType="decimal-pad"
+                            inputMode="decimal"
+                          />
+                        </View>
+                      )}
+                    </View>
                   );
                 })
               )}
@@ -635,9 +641,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   personItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
+    alignItems: 'stretch',
     borderWidth: 1.5,
     borderColor: Colors.neutral[300],
     borderRadius: 12,
@@ -647,6 +652,12 @@ const styles = StyleSheet.create({
   personItemSelected: {
     borderColor: Colors.primary[600],
     backgroundColor: Colors.primary[50],
+  },
+  personItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 32,
   },
   personInfo: {
     flex: 1,
@@ -676,6 +687,7 @@ const styles = StyleSheet.create({
     color: Colors.neutral[700],
   },
   personAmountInput: {
+    flex: 1,
     minWidth: 90,
     paddingVertical: 8,
     paddingHorizontal: Spacing.xs,
