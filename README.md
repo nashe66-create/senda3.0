@@ -1,15 +1,18 @@
-# senda-New
+# Senda
 
 [![Open in Bolt](https://bolt.new/static/open-in-bolt.svg)](https://bolt.new/~/sb1-rutfrxo7)
 
+## Run without Copilot
 
+See [docs/standalone-prototype.md](docs/standalone-prototype.md) for the Windows setup, Supabase environment configuration, local run commands, and steps to publish a permanent browser prototype.
+
+Install dependencies with `npm install`, configure `.env` using `.env.example`, then run:
+
+```sh
 npm run dev
+```
 
-The default development command uses Expo Tunnel and targets Expo Go, so the
-terminal should show a public `exp.direct` URL/QR code instead of a local
-`10.x.x.x` address. If the CLI opens in development-client mode, press `s` in
-the Expo terminal to switch to Expo Go. Use `npm run dev:local` only when the
-phone and development machine are on a network that can reach the local address.
+The default development command uses Expo Tunnel and targets Expo Go, so the terminal should show a public `exp.direct` URL/QR code instead of a local `10.x.x.x` address. If the CLI opens in development-client mode, press `s` in the Expo terminal to switch to Expo Go. Use `npm run dev:local` only when the phone and development machine are on a network that can reach the local address. To preview in a browser, run `npx expo start --web`.
 
 ## Recurring cycles
 
@@ -19,7 +22,7 @@ Deploy the function and configure `SENDA_RECURRING_CRON_SECRET` as a Supabase se
 
 ```sh
 curl -X POST "$SUPABASE_URL/functions/v1/senda-recurring-cycles" \
-	-H "x-senda-cron-secret: $SENDA_RECURRING_CRON_SECRET"
+  -H "x-senda-cron-secret: $SENDA_RECURRING_CRON_SECRET"
 ```
 
 Do not expose the cron secret to the mobile or web client.
@@ -44,4 +47,3 @@ npx supabase functions deploy senda-payout-reconciliation
 ```
 
 The scheduler sends only the protected cron request. It never trusts client-reported payout status, and no card or transfer credentials are stored by the worker.
-
