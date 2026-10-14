@@ -104,7 +104,7 @@ Deno.serve(async (req: Request) => {
     // Look up the charge ID from the transaction
     const { data: transaction } = await supabase
       .from("transactions")
-      .select("flutterwave_charge_id, amount_gbp, payment_reference, status, plan_id")
+      .select("flutterwave_charge_id, amount_gbp, payment_reference, status, plan_id, created_at")
       .eq("id", transactionId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -135,6 +135,50 @@ Deno.serve(async (req: Request) => {
         : [];
 
       if (matchingCharges.length !== 1) {
+        const createdAt = Date.parse(String(transaction.created_at ?? ""));
+        const oldPendingRequestHasNoProviderCharge =
+          matchingCharges.length === 0 &&
+          transaction.status === "pending" &&
+          Number.isFinite(createdAt) &&
+          Date.now() - createdAt > 30 * 60 * 1000;
+
+        if (oldPendingRequestHasNoProviderCharge) {
+          const { data: processingPlan } = await serviceClient
+            .from("plans")
+            .select("id, status")
+            .eq("id", transaction.plan_id)
+            .maybeSingle();
+
+          // A locked order is returned to the quote stage only after Flutterwave
+          // confirms there is no charge with this unique reference for 30+ min.
+          if (processingPlan?.status === "payment_processing") {
+            const { data: failedTransaction, error: failTransactionError } = await serviceClient
+              .from("transactions")
+              .update({ status: "failed", idempotency_key: null })
+              .eq("id", transactionId)
+              .eq("status", "pending")
+              .is("flutterwave_charge_id", null)
+              .select("id")
+              .maybeSingle();
+
+            if (!failTransactionError && failedTransaction) {
+              await serviceClient
+                .from("plans")
+                .update({ status: "quoted", payment_status: "pending", quote_locked_at: null })
+                .eq("id", transaction.plan_id)
+                .eq("status", "payment_processing");
+
+              return jsonResponse({
+                success: true,
+                verified: true,
+                status: "failed",
+                charge_status: "not_found",
+                charge_lookup: "not_found_after_grace_period",
+              });
+            }
+          }
+        }
+
         return jsonResponse({
           success: true,
           verified: false,
