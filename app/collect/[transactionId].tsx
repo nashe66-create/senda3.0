@@ -299,8 +299,12 @@ export default function CollectScreen() {
         applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Payment failed');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'Payment status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted
+        ? message
+        : 'We could not confirm whether the payment request reached the provider. Senda is checking its status; do not submit the payment again.');
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
