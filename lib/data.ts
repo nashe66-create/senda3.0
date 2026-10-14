@@ -1142,6 +1142,8 @@ export async function collectCard(payload: {
   charge_id?: string;
   next_action?: any;
   error?: string;
+  error_code?: string;
+  charge_id?: string | null;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
@@ -1163,7 +1165,12 @@ export async function collectCard(payload: {
 
   const data = await response.json();
   if (!response.ok || !data.success) {
-    return { success: false, error: data?.error ?? 'Card collection failed' };
+    return {
+      success: false,
+      error: data?.error ?? 'Card collection failed',
+      error_code: data?.error_code,
+      charge_id: data?.charge_id ?? null,
+    };
   }
   return data;
 }
