@@ -144,6 +144,29 @@ export default function CollectScreen() {
           return;
         }
 
+        if (result.next_action?.type === 'requires_otp' || result.next_action?.type === 'otp') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('requires_otp');
+          setShowOtpModal(true);
+          return;
+        }
+
+        if (result.next_action?.type === 'requires_pin' || result.next_action?.type === 'pin') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('requires_pin');
+          setShowPinModal(true);
+          return;
+        }
+
+        if (result.next_action?.type === 'requires_additional_fields') {
+          setNextAction(result.next_action);
+          setError(null);
+          setChargeStatus('requires_additional_fields');
+          return;
+        }
+
         if (result.next_action?.type === 'redirect_url') {
           setNextAction(result.next_action);
           setError(null);
