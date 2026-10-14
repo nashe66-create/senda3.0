@@ -346,8 +346,10 @@ export default function CollectScreen() {
         applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'We could not verify the billing details');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'The authorisation status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
@@ -382,8 +384,10 @@ export default function CollectScreen() {
         applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'OTP verification failed');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'OTP authorisation status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
@@ -419,8 +423,10 @@ export default function CollectScreen() {
         applyVerificationResult(verifyResult);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'PIN verification failed');
-      setChargeStatus('failed');
+      const message = e?.message ?? 'PIN authorisation status is uncertain.';
+      const definitelyNotSubmitted = message === 'Missing Supabase configuration' || message === 'Not authenticated';
+      setError(definitelyNotSubmitted ? message : 'Senda is checking the payment status after an interrupted authorisation. Do not submit the payment again.');
+      setChargeStatus(definitelyNotSubmitted ? 'failed' : 'processing');
     } finally {
       setSubmitting(false);
     }
