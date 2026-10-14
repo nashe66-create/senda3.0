@@ -382,6 +382,17 @@ export default function CollectScreen() {
               <Text style={styles.btnText}>Done</Text>
             </Button>
           </View>
+        ) : chargeStatus === 'processing' ? (
+          <View style={styles.resultContainer}>
+            <Loader color={Colors.primary[600]} size={56} strokeWidth={1.5} />
+            <Text style={styles.resultTitle}>Confirming your payment</Text>
+            <Text style={styles.resultDesc}>
+              {error ?? 'We are checking the payment provider for confirmation. Please do not submit the payment again.'}
+            </Text>
+            <Button onPress={handleCheckPaymentStatus} style={styles.actionBtn}>
+              <Text style={styles.btnText}>Check payment status</Text>
+            </Button>
+          </View>
         ) : chargeStatus === 'failed' ? (
           <View style={styles.resultContainer}>
             <AlertCircle color={Colors.error[500]} size={64} strokeWidth={1.5} />
