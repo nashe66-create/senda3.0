@@ -19,12 +19,13 @@ const CORRIDORS = [
   { country_code: "ZM", country_name: "Zambia", currency: "ZMW", methods: ["bank_account", "mobile_money_wallet"] },
   { country_code: "ZA", country_name: "South Africa", currency: "ZAR", methods: ["bank_account"] },
   { country_code: "EG", country_name: "Egypt", currency: "EGP", methods: ["bank_account", "mobile_money_wallet", "cash_pick_up"] },
-  { country_code: "CI", country_name: "Côte d’Ivoire", currency: "XOF", methods: ["bank_account", "mobile_money_wallet"] },
+  { country_code: "BJ", country_name: "Benin", currency: "XOF", methods: ["mobile_money_wallet"] },
+  { country_code: "BF", country_name: "Burkina Faso", currency: "XOF", methods: ["mobile_money_wallet"] },
+  { country_code: "CI", country_name: "Côte d’Ivoire", currency: "XOF", methods: ["mobile_money_wallet"] },
   { country_code: "SN", country_name: "Senegal", currency: "XOF", methods: ["bank_account", "mobile_money_wallet"] },
-  { country_code: "CM", country_name: "Cameroon", currency: "XAF", methods: ["bank_account", "mobile_money_wallet"] },
-  { country_code: "US", country_name: "United States", currency: "USD", methods: ["bank_account"] },
-  { country_code: "GB", country_name: "United Kingdom", currency: "GBP", methods: ["bank_account"] },
-  { country_code: "EU", country_name: "Eurozone", currency: "EUR", methods: ["bank_account"] },
+  { country_code: "CM", country_name: "Cameroon", currency: "XAF", methods: ["mobile_money_wallet"] },
+  { country_code: "CG", country_name: "Republic of the Congo", currency: "XAF", methods: ["mobile_money_wallet"] },
+  { country_code: "GA", country_name: "Gabon", currency: "XAF", methods: ["mobile_money_wallet"] },
 ] as const;
 
 function jsonResponse(data: Record<string, unknown>, status = 200) {
