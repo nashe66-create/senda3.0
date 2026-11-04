@@ -27,7 +27,6 @@ Deno.serve(async (req: Request) => {
     const authorization = req.headers.get("Authorization");
     if (!authorization) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
 
-    // Verify the caller's JWT using Supabase Auth; never decode JWTs locally.
     const authClient = createClient(url, anonKey, {
       global: { headers: { Authorization: authorization } },
       auth: { persistSession: false, autoRefreshToken: false },
@@ -42,40 +41,51 @@ Deno.serve(async (req: Request) => {
 
     const sourceCurrency = String(body.source_currency ?? body.sourceCurrency ?? "GBP").toUpperCase();
     const destinationCurrency = String(body.destination_currency ?? body.destinationCurrency ?? "NGN").toUpperCase();
+    const amount = Number(body.amount ?? 1);
     if (!/^[A-Z]{3}$/.test(sourceCurrency) || !/^[A-Z]{3}$/.test(destinationCurrency)) {
       return jsonResponse({ success: false, error: "Currencies must be valid three-letter codes" }, 400);
     }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return jsonResponse({ success: false, error: "Amount must be greater than zero" }, 400);
+    }
+
     if (sourceCurrency === destinationCurrency) {
       return jsonResponse({ success: true, provider: "fincra", source_currency: sourceCurrency,
-        destination_currency: destinationCurrency, rate: 1, rate_timestamp: new Date().toISOString() });
+        destination_currency: destinationCurrency, amount, rate: 1, destination_amount: amount,
+        rate_timestamp: new Date().toISOString(), quote_reference: null, quote_expires_at: null });
     }
 
+    // Market data is indicative only. The executable quote endpoint requires
+    // business + transaction + payout-rail context and returns a 30s reference.
     const pair = `${sourceCurrency}-${destinationCurrency}`;
-    const response = await fincraRequest<any>(`/quotes/treasury-orders/rates?currencyPair=${encodeURIComponent(pair)}&perPage=100`);
+    const response = await fincraRequest<any>(
+      `/quotes/treasury-orders/rates?currencyPair=${encodeURIComponent(pair)}&perPage=100`,
+    );
     const rates = response?.data?.rates;
-    if (!Array.isArray(rates)) {
-      return jsonResponse({ success: false, error: "Fincra did not return an FX rates list" }, 502);
+    if (!response?.success || !Array.isArray(rates)) {
+      return jsonResponse({ success: false, error: "Fincra rates endpoint returned an unexpected response" }, 502);
     }
 
-    // A remittance sends source funds to the destination. Prefer Fincra's sell
-    // side for the base/source currency; do not silently invert a missing pair.
-    const match = rates.find((item: any) =>
+    const matchingRates = rates.filter((item: any) =>
       String(item.baseCurrency).toUpperCase() === sourceCurrency &&
-      String(item.quoteCurrency).toUpperCase() === destinationCurrency &&
-      String(item.side).toLowerCase() === "sell"
+      String(item.quoteCurrency).toUpperCase() === destinationCurrency
     );
-    const rate = Number(match?.price);
-    if (!Number.isFinite(rate) || rate <= 0) {
-      return jsonResponse({ success: false, error: `Fincra has no sell rate for ${pair}`, error_code: "RATE_UNAVAILABLE" }, 422);
+    if (matchingRates.length === 0) {
+      return jsonResponse({ success: false, error: `Fincra returned no market rates for ${pair}`,
+        error_code: "RATE_UNAVAILABLE" }, 422);
     }
 
     return jsonResponse({
       success: true,
       provider: "fincra",
+      mode: "indicative_market_rates",
       source_currency: sourceCurrency,
       destination_currency: destinationCurrency,
-      rate,
-      rate_timestamp: response?.data?.pagination?.timestamp ?? new Date().toISOString(),
+      amount,
+      rates: matchingRates,
+      rate_timestamp: response?.data?.pagination?.timestamp ?? null,
+      executable_quote: false,
+      quote_note: "Indicative buy/sell rates only. Generate a Fincra quote with transaction type, business, payout rail and fee bearer before displaying a locked customer rate. Fincra quotes expire after 30 seconds.",
     });
   } catch (error) {
     console.error("Fincra FX lookup failed", error instanceof FincraApiError ? {
