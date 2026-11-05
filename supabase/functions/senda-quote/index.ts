@@ -38,7 +38,7 @@ function fromMinorUnits(amount: number): number {
   return Number((amount / 100).toFixed(2));
 }
 
-/** Senda fee: 0.5% of principal, minimum £0.50. */
+/** Senda fee: 0.5% of principal, minimum £0.50. Currently unused (fee disabled for Fincra pure-cost testing). */
 function calculateSendaFee(sourceAmount: number): number {
   const sourceMinorUnits = toMinorUnits(sourceAmount);
   return fromMinorUnits(Math.max(Math.round(sourceMinorUnits / 200), 50));
@@ -81,7 +81,6 @@ async function generateFincraConversionQuote(params: {
     beneficiaryType: "individual",
   };
 
-  // Keep provider I/O well under the Edge idle timeout.
   const response = await fincraRequest<any>("/quotes/generate", {
     method: "POST",
     body,
@@ -125,8 +124,6 @@ async function generateFincraConversionQuote(params: {
 }
 
 Deno.serve(async (req: Request) => {
-  // CORS preflight must return before any auth, DB, or provider work.
-  // A hang here produces IDLE_TIMEOUT 504 with only a "shutdown" log.
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -481,16 +478,20 @@ Deno.serve(async (req: Request) => {
 
     const sourceAmount = Number(totalSourceAmount.toFixed(2));
     const destinationAmount = Number(totalDestinationAmount.toFixed(2));
-    const sendaFee = calculateSendaFee(sourceAmount);
 
-    const providerConversionFee = fincraQuote.fee;
-    const collectionFee: number | null = null;
+    // Temporary: Senda fee disabled so quotes surface pure Fincra economics.
+    // Re-enable calculateSendaFee when product pricing is restored.
+    const sendaFee = 0;
     const sendaFxMargin = 0;
 
-    const processingFee = sendaFee;
-    const customerPays = fromMinorUnits(
-      toMinorUnits(sourceAmount) + toMinorUnits(processingFee),
-    );
+    // Conversion fee is Fincra's (feeBearer=business → settled from Senda wallet, not customer).
+    // Collection fee is unknown until checkout — never invent it.
+    const providerConversionFee = fincraQuote.fee;
+    const collectionFee: number | null = null;
+
+    // Customer pays principal only while Senda fee is off and conversion fee is business-borne.
+    const processingFee = 0;
+    const customerPays = sourceAmount;
 
     const now = new Date();
     const expiresAt = new Date(fincraQuote.expireAt);
@@ -602,7 +603,7 @@ Deno.serve(async (req: Request) => {
       quote_created_at: now.toISOString(),
       quote_expires_at: expiresAt.toISOString(),
       quote_note:
-        "Executable Fincra conversion quote. Valid for ~30 seconds. GBP collection is separate; conversion runs after GBP settles into the merchant wallet.",
+        "Executable Fincra conversion quote (pure provider economics: Senda fee temporarily 0). Valid for ~30 seconds. GBP collection is separate; conversion runs after GBP settles into the merchant wallet.",
       recipients: recipientBreakdown,
     });
   } catch (error) {
