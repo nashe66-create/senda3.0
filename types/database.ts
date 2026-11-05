@@ -1,1 +1,404 @@
-PLACEHOLDER
+/* =========================================================
+   CORE APP TYPES
+   ========================================================= */
+
+export type KycStatus = 'unverified' | 'submitted' | 'pending' | 'provider_status_unknown' | 'verified' | 'rejected';
+
+export type PricingMode = 'fixed_source' | 'fixed_destination';
+
+export type OrderStatus =
+  | 'draft'
+  | 'quoted'
+  | 'awaiting_payment'
+  | 'payment_processing'
+  | 'funded'
+  | 'payouts_processing'
+  | 'completed'
+  | 'payment_failed'
+  | 'partially_failed'
+  | 'failed'
+  | 'cancelled';
+
+export type PaymentStatus = 'pending' | 'processing' | 'successful' | 'failed';
+
+export type PayoutStatus =
+  | 'pending'
+  | 'ready'
+  | 'creating'
+  | 'creating_unknown'
+  | 'submitted'
+  | 'confirming'
+  | 'confirming_unknown'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'reconciliation_required'
+  | 'resolution';
+
+export type PayoutMethod = 'bank' | 'mobile_money' | 'cash_pickup';
+
+export type CommitmentStatus = PayoutStatus;
+
+export type TransactionStatus = 'pending' | 'successful' | 'failed' | 'refunded';
+
+export type FinancialReconciliationStatus = 'pending' | 'reconciled' | 'requires_review';
+
+export type ReceivingMethod = 'mobile_money' | 'bank_account' | 'cash_pickup' | 'bill_payment';
+
+export type PayoutType = 'mobile_money' | 'cash_pickup';
+
+export type RecipientVerificationStatus = 'pending' | 'verified' | 'needs_attention';
+
+export type RecurringType = 'one_off' | 'weekly' | 'biweekly' | 'monthly';
+
+export type TransferAction = 'deferred' | 'instant';
+
+export type NextActionType = 'requires_pin' | 'requires_otp' | 'requires_additional_fields' | 'redirect_url' | null;
+
+export interface Profile {
+  id: string;
+  email: string;
+  full_name: string;
+  phone: string;
+  kyc_status: KycStatus;
+  flutterwave_customer_id: string | null;
+  flutterwave_sender_id: string | null;
+  country: string;
+  kyc_national_id_type: string | null;
+  kyc_national_id_number: string | null;
+  kyc_national_id_expiry: string | null;
+  kyc_date_of_birth: string | null;
+  kyc_address: Record<string, string> | null;
+  kyc_submitted_at: string | null;
+  kyc_verified_at: string | null;
+  created_at: string;
+}
+
+export interface Recipient {
+  id: string;
+  user_id: string;
+  name: string;
+  country: string;
+  receiving_method: ReceivingMethod;
+  phone: string;
+  mobile_money_provider: string;
+  bank_code: string;
+  account_number: string;
+  bill_type: string;
+  relationship: string;
+  notes: string;
+  flutterwave_recipient_id: string | null;
+  flutterwave_recipient_type: string | null;
+  flutterwave_account_name: string | null;
+  payout_type: PayoutType | null;
+  mobile_money_network: string | null;
+  destination_country: string | null;
+  cash_pickup_provider: string | null;
+  currency: string | null;
+  flutterwave_network_code: string | null;
+  flutterwave_bank_name: string | null;
+  verification_status: RecipientVerificationStatus;
+  validation_error_code: string | null;
+  validation_error_message: string | null;
+  created_at: string;
+}
+
+export interface Plan {
+  id: string;
+  user_id: string;
+  name: string;
+  status: OrderStatus;
+  total_gbp: number;
+  total_recipients: number;
+  destination_currencies: string[];
+  next_run_date: string | null;
+  recurring: RecurringType;
+  created_at: string;
+  updated_at: string;
+  pricing_mode: PricingMode;
+  destination_country: string | null;
+  destination_currency: string | null;
+  source_amount: number;
+  destination_amount: number;
+  customer_pays: number;
+  customer_fx_rate: number;
+  provider_fx_rate: number;
+  provider_fee: number;
+  senda_fee: number;
+  processing_fee: number;
+  actual_collection_cost: number | null;
+  senda_fx_margin: number;
+  quote_created_at: string | null;
+  quote_expires_at: string | null;
+  quote_locked_at: string | null;
+  payment_status: PaymentStatus;
+  financial_reconciliation_status: FinancialReconciliationStatus;
+}
+
+export interface Commitment {
+  id: string;
+  plan_id: string;
+  recipient_id: string | null;
+  user_id: string;
+  amount_gbp: number;
+  destination_currency: string;
+  amount_destination: number;
+  fx_rate: number;
+  receiving_method: ReceivingMethod;
+  status: CommitmentStatus;
+  flutterwave_transfer_id: string | null;
+  failure_reason: string | null;
+  idempotency_key: string | null;
+  transfer_action: TransferAction;
+  created_at: string;
+  recipient_snapshot: RecipientSnapshot | null;
+  provider_status: string | null;
+  payout_method: PayoutMethod | null;
+  failure_reason_display: string | null;
+  resolution_reason: string | null;
+  resolved_at: string | null;
+}
+
+export interface Transaction {
+  id: string;
+  plan_id: string;
+  user_id: string;
+  amount_gbp: number;
+  status: TransactionStatus;
+  payment_reference: string;
+  flutterwave_payment_id: string | null;
+  flutterwave_charge_id: string | null;
+  idempotency_key: string | null;
+  next_action_type: NextActionType;
+  card_last4: string | null;
+  card_network: string | null;
+  created_at: string;
+  completed_at: string | null;
+
+  plan?: Plan | null;
+}
+
+export interface SavedCard {
+  id: string;
+  brand: string;
+  last4: string;
+  expiry_month?: string | null;
+  expiry_year?: string | null;
+  provider_customer_id?: string | null;
+  provider_payment_method_id?: string | null;
+  created_at?: string;
+  is_default?: boolean;
+}
+
+export interface TransferAttempt {
+  id: string;
+  commitment_id: string;
+  attempt_number: number;
+  provider: 'flutterwave';
+  provider_reference: string;
+  idempotency_key: string;
+  provider_transfer_id: string | null;
+  provider_status: string | null;
+  status: string;
+  actual_provider_payout_cost: number | null;
+  actual_provider_payout_cost_currency: string | null;
+  provider_cost_observed_at: string | null;
+}
+
+export interface PlanWithCommitments extends Plan {
+  commitments: CommitmentWithRecipient[];
+}
+
+export interface CommitmentWithRecipient extends Commitment {
+  recipient: Recipient | null;
+}
+
+/* =========================================================
+   ORCHESTRATION TYPES
+   ========================================================= */
+
+export interface RecipientSnapshot {
+  name: string;
+  phone: string;
+  country: string;
+  receiving_method: ReceivingMethod;
+  mobile_money_network: string | null;
+  mobile_money_provider: string | null;
+  bank_code: string | null;
+  account_number: string | null;
+  destination_country: string | null;
+  currency: string | null;
+  flutterwave_recipient_id: string | null;
+  verification_status: RecipientVerificationStatus;
+}
+
+export interface QuoteRecipientBreakdown {
+  commitment_id: string;
+  recipient_name: string;
+  source_amount: number;
+  destination_amount: number;
+  fx_rate: number;
+  payout_method: PayoutMethod;
+}
+
+/** Fee line with explicit verification status — never invent amounts. */
+export type FeeVerification = 'verified' | 'not_applicable' | 'unknown_until_payment';
+
+export interface QuoteFeeLine {
+  amount: number | null;
+  currency: string;
+  status: FeeVerification;
+  /** Short customer-facing label */
+  label: string;
+  /** Optional detail for transparency */
+  note?: string;
+}
+
+export interface QuoteFeeBreakdown {
+  /** FX conversion fee returned by Fincra conversion quote */
+  conversion: QuoteFeeLine;
+  /** Card/VA collection fee — often only known after settlement for GBP */
+  collection: QuoteFeeLine;
+  /** Per-payout fees if quoted; otherwise unknown until payout */
+  payout: QuoteFeeLine;
+  /** Explicit Senda product fee (0 while disabled) */
+  senda: QuoteFeeLine;
+  /** Sum of verified fee lines only; null if any required leg is unknown */
+  total_verified_fees: number | null;
+  /** True when customer_pays is a complete all-in figure */
+  all_in_complete: boolean;
+  transparency_note: string;
+}
+
+export interface QuoteResult {
+  success: boolean;
+  plan_id: string;
+  pricing_mode: PricingMode;
+  provider?: string;
+  source_currency: string;
+  destination_country: string;
+  destination_currency: string;
+  source_amount: number;
+  destination_amount: number;
+  customer_pays: number;
+  customer_fx_rate: number;
+  provider_fx_rate: number;
+  provider_fee: number;
+  senda_fee: number;
+  processing_fee: number;
+  senda_fx_margin: number;
+  actual_collection_cost?: number | null;
+  quote_reference?: string;
+  quote_created_at: string;
+  quote_expires_at: string;
+  quote_note?: string;
+  fee_breakdown?: QuoteFeeBreakdown;
+  recipients: QuoteRecipientBreakdown[];
+  error?: string;
+  error_code?: string;
+}
+
+export interface PayoutSummary {
+  success: boolean;
+  plan_id: string;
+  total: number;
+  submitted: number;
+  failed: number;
+  skipped: number;
+  errors: string[];
+  payouts?: Array<{
+    commitment_id: string;
+    recipient_name: string;
+    status: string;
+    transfer_id: string | null;
+    error?: string;
+  }>;
+  error?: string;
+}
+
+/* =========================================================
+   FLUTTERWAVE
+   ========================================================= */
+
+export interface FlutterwaveCurrency {
+  code: string;
+  name?: string | null;
+  symbol?: string | null;
+  currency?: string | null;
+
+  [key: string]: any;
+}
+
+export interface FlutterwaveMobileNetwork {
+  id?: string | number | null;
+  code?: string | null;
+  name?: string | null;
+  currency?: string | null;
+  country?: string | null;
+
+  [key: string]: any;
+}
+
+export interface FlutterwaveBank {
+  id?: string | number | null;
+  code?: string | null;
+  name?: string | null;
+  currency?: string | null;
+  country?: string | null;
+
+  [key: string]: any;
+}
+
+export interface FlutterwaveCountry {
+  id?: string | number | null;
+  code?: string | null;
+  name?: string | null;
+  currency?: string | null;
+  flag?: string | null;
+
+  payout_methods?: string[];
+
+  [key: string]: any;
+}
+
+export interface FlutterwaveOptions {
+  source_country: string;
+  source_currency: string;
+
+  country?: string;
+
+  countries: FlutterwaveCountry[];
+
+  currencies: FlutterwaveCurrency[];
+
+  mobile_networks: FlutterwaveMobileNetwork[];
+
+  banks: FlutterwaveBank[];
+
+  payout_methods: string[];
+
+  [key: string]: any;
+}
+
+/* =========================================================
+   PAYOUT CORRIDOR (cached reference data)
+   ========================================================= */
+
+export interface PayoutCorridorCountry {
+  country_code: string;
+  country_name: string;
+  currency: string;
+  mobile_money_supported: boolean;
+  cash_pickup_supported: boolean;
+  bank_supported: boolean;
+}
+
+export interface PayoutCorridorNetwork {
+  network_code: string;
+  network_name: string;
+}
+
+export interface PayoutCorridorBank {
+  bank_code: string;
+  bank_name: string;
+}
