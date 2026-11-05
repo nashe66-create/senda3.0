@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.58.0";
+import { fincraRequest, FincraApiError } from "../_shared/fincra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,144 +8,25 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const TOKEN_URL = "https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token";
-const FLW_BASE_URL = (() => {
-  const v = Deno.env.get("FLW_BASE_URL") ?? "";
-  return /^https:\/\/[^ ]*flutterwave\.com/i.test(v) ? v : "https://developersandbox-api.flutterwave.com";
-})();
+/** Supported pilot corridors: Mobile Money + Bank (Fincra). */
+const SUPPORTED_CORRIDORS: Record<string, { currency: string; country: string }> = {
+  KE: { currency: "KES", country: "KE" },
+  GH: { currency: "GHS", country: "GH" },
+  UG: { currency: "UGX", country: "UG" },
+  ZM: { currency: "ZMW", country: "ZM" },
+  TZ: { currency: "TZS", country: "TZ" },
+  CM: { currency: "XAF", country: "CM" },
+  CI: { currency: "XOF", country: "CI" },
+  SN: { currency: "XOF", country: "SN" },
+  BJ: { currency: "XOF", country: "BJ" },
+  BF: { currency: "XOF", country: "BF" },
+};
 
 function jsonResponse(data: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-class FlutterwaveFeeError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function getAccessToken(): Promise<string> {
-  const clientId = Deno.env.get("FLW_CLIENT_ID");
-  const clientSecret = Deno.env.get("FLW_CLIENT_SECRET");
-  if (!clientId) throw new Error("FLW_CLIENT_ID is not configured");
-  if (!clientSecret) throw new Error("FLW_CLIENT_SECRET is not configured");
-
-  const response = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "client_credentials",
-    }),
-  });
-
-  const text = await response.text();
-  let data: any = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
-
-  if (!response.ok || !data?.access_token) {
-    throw new Error(data?.error_description ?? data?.message ?? "Flutterwave authentication failed");
-  }
-  return data.access_token;
-}
-
-async function fetchFxRate(accessToken: string, sourceCurrency: string, destinationCurrency: string, amount: number): Promise<{ rate: number; destinationAmount: number | null }> {
-  const response = await fetch(`${FLW_BASE_URL}/transfers/rates`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "X-Trace-Id": crypto.randomUUID(),
-      "X-Idempotency-Key": `SENDA-FX-${Date.now()}`,
-    },
-    body: JSON.stringify({
-      source: { currency: sourceCurrency },
-      destination: { currency: destinationCurrency, amount },
-      precision: 6,
-    }),
-  });
-
-  const text = await response.text();
-  let data: any = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
-
-  if (!response.ok) {
-    throw new Error(data?.message ?? "Failed to fetch FX rate");
-  }
-
-  const root = data?.data ?? data;
-  const rate = Number(root?.rate ?? root?.exchange_rate ?? root?.conversion_rate ?? root?.rate_card?.rate ?? 0);
-  const destinationAmount = root?.destination?.amount ?? root?.destination_amount ?? null;
-
-  return { rate, destinationAmount };
-}
-
-async function fetchCollectionFee(accessToken: string, amountGbp: number): Promise<number> {
-  // Required by Flutterwave v4 /fees: amount, currency, payment_method (country is optional context).
-  const queryParams = {
-    amount: String(amountGbp),
-    currency: "GBP",
-    payment_method: "card",
-    country: "GB",
-  };
-  const query = new URLSearchParams(queryParams);
-  const url = `${FLW_BASE_URL}/fees?${query.toString()}`;
-
-  console.log("Flutterwave collection fee request", {
-    method: "GET",
-    endpoint: "/fees",
-    base_url: FLW_BASE_URL,
-    query: queryParams,
-    has_body: false,
-  });
-
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json",
-      "X-Trace-Id": crypto.randomUUID(),
-    },
-  });
-
-  const text = await response.text();
-  let data: any = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_response: text }; }
-
-  if (!response.ok) {
-    console.error("Flutterwave collection fee request failed", {
-      endpoint: "/fees",
-      method: "GET",
-      status: response.status,
-      body: data,
-    });
-    const providerMessage = data?.error?.message ?? data?.message ?? data?.error_description;
-    throw new FlutterwaveFeeError(
-      `Flutterwave collection fee request failed (status ${response.status}${providerMessage ? `: ${providerMessage}` : ""})`,
-      response.status,
-    );
-  }
-
-  const root = data?.data ?? data;
-  const feeEntry = Array.isArray(root) ? root[0] : root;
-  const fee = Number(feeEntry?.fee ?? feeEntry?.amount?.fee ?? feeEntry?.total_fee ?? NaN);
-  if (!Number.isFinite(fee) || fee < 0) {
-    console.error("Flutterwave collection fee response missing fee value", {
-      endpoint: "/fees",
-      status: response.status,
-      body: data,
-    });
-    throw new FlutterwaveFeeError("Flutterwave collection fee was not returned", response.status);
-  }
-
-  return Number(fee.toFixed(2));
 }
 
 function toMinorUnits(amount: number): number {
@@ -155,9 +37,89 @@ function fromMinorUnits(amount: number): number {
   return Number((amount / 100).toFixed(2));
 }
 
+/** Senda fee: 0.5% of principal, minimum £0.50. */
 function calculateSendaFee(sourceAmount: number): number {
   const sourceMinorUnits = toMinorUnits(sourceAmount);
   return fromMinorUnits(Math.max(Math.round(sourceMinorUnits / 200), 50));
+}
+
+type FincraConversionQuote = {
+  reference: string;
+  rate: number;
+  sourceAmount: number;
+  destinationAmount: number;
+  fee: number;
+  amountToCharge: number | null;
+  amountToReceive: number | null;
+  expireAt: string;
+  raw: unknown;
+};
+
+/**
+ * Executable wallet-conversion quote (GBP → destination currency).
+ * transactionType=conversion, paymentDestination=fliqpay_wallet.
+ * Fee bearer = business so recipient amounts are not reduced by provider fee.
+ * Quotes expire in ~30 seconds per Fincra contract.
+ */
+async function generateFincraConversionQuote(params: {
+  sourceCurrency: string;
+  destinationCurrency: string;
+  amount: number;
+  action: "send" | "receive";
+  businessId: string;
+}): Promise<FincraConversionQuote> {
+  const body = {
+    sourceCurrency: params.sourceCurrency,
+    destinationCurrency: params.destinationCurrency,
+    amount: String(params.amount),
+    action: params.action,
+    transactionType: "conversion",
+    business: params.businessId,
+    feeBearer: "business",
+    paymentDestination: "fliqpay_wallet",
+    beneficiaryType: "individual",
+  };
+
+  const response = await fincraRequest<any>("/quotes/generate", {
+    method: "POST",
+    body,
+    idempotencyKey: `SENDA-QUOTE-${crypto.randomUUID()}`,
+  });
+
+  const root = response?.data ?? response;
+  const reference = String(root?.reference ?? root?.quoteReference ?? "").trim();
+  const rate = Number(root?.rate ?? root?.exchangeRate ?? root?.conversionRate ?? 0);
+  const sourceAmount = Number(root?.sourceAmount ?? root?.amountToCharge ?? params.amount);
+  const destinationAmount = Number(root?.destinationAmount ?? root?.amountToReceive ?? 0);
+  const fee = Number(root?.fee ?? root?.providerFee ?? 0);
+  const amountToCharge = root?.amountToCharge != null ? Number(root.amountToCharge) : null;
+  const amountToReceive = root?.amountToReceive != null ? Number(root.amountToReceive) : null;
+  const expireAt = String(root?.expireAt ?? root?.expiresAt ?? "");
+
+  if (!reference) {
+    throw new FincraApiError("Fincra quote response missing reference", 502, "MISSING_QUOTE_REFERENCE", response);
+  }
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new FincraApiError("Fincra quote response missing valid rate", 502, "INVALID_QUOTE_RATE", response);
+  }
+  if (!Number.isFinite(destinationAmount) || destinationAmount <= 0) {
+    throw new FincraApiError("Fincra quote response missing destination amount", 502, "INVALID_DESTINATION_AMOUNT", response);
+  }
+
+  // Default 30s if provider omits expiry
+  const resolvedExpireAt = expireAt || new Date(Date.now() + 30_000).toISOString();
+
+  return {
+    reference,
+    rate,
+    sourceAmount: Number(sourceAmount.toFixed(2)),
+    destinationAmount: Number(destinationAmount.toFixed(2)),
+    fee: Number.isFinite(fee) && fee >= 0 ? Number(fee.toFixed(2)) : 0,
+    amountToCharge: amountToCharge != null && Number.isFinite(amountToCharge) ? Number(amountToCharge.toFixed(2)) : null,
+    amountToReceive: amountToReceive != null && Number.isFinite(amountToReceive) ? Number(amountToReceive.toFixed(2)) : null,
+    expireAt: resolvedExpireAt,
+    raw: response,
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -168,8 +130,13 @@ Deno.serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const businessId = Deno.env.get("FINCRA_BUSINESS_ID");
+
     if (!supabaseUrl || !serviceRoleKey) {
       throw new Error("Supabase server configuration is missing");
+    }
+    if (!businessId) {
+      throw new Error("FINCRA_BUSINESS_ID is not configured");
     }
 
     const authHeader = req.headers.get("Authorization");
@@ -199,15 +166,14 @@ Deno.serve(async (req: Request) => {
         destination_amount?: number;
       }>;
     };
-    try { payload = await req.json(); } catch {
+    try {
+      payload = await req.json();
+    } catch {
       return jsonResponse({ success: false, error: "Invalid JSON request body" }, 400);
     }
 
     if (!payload.plan_id) {
-      return jsonResponse({
-        success: false,
-        error: "Missing required field: plan_id",
-      }, 400);
+      return jsonResponse({ success: false, error: "Missing required field: plan_id" }, 400);
     }
 
     if (!payload.allocations || payload.allocations.length === 0) {
@@ -236,14 +202,15 @@ Deno.serve(async (req: Request) => {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("kyc_status, flutterwave_sender_id")
+      .select("kyc_status")
       .eq("id", userId)
       .maybeSingle();
 
-    if (profile?.kyc_status !== "verified" || !profile?.flutterwave_sender_id) {
+    // Provider-neutral KYC gate (Flutterwave sender_id no longer required)
+    if (profile?.kyc_status !== "verified") {
       return jsonResponse({
         success: false,
-        error: "Complete account setup and wait for sender verification before requesting a quote.",
+        error: "Complete account verification before requesting a quote.",
         error_code: "SENDER_NOT_READY",
       }, 403);
     }
@@ -268,10 +235,22 @@ Deno.serve(async (req: Request) => {
       }, 400);
     }
 
+    // Corridor allow-list for current pilot set
+    const corridor = SUPPORTED_CORRIDORS[planDestinationCountry];
+    if (!corridor || corridor.currency !== planDestinationCurrency) {
+      return jsonResponse({
+        success: false,
+        error: `Corridor ${planDestinationCountry}/${planDestinationCurrency} is not enabled for Fincra payouts yet. Supported: KE/KES, GH/GHS, UG/UGX, ZM/ZMW, TZ/TZS, CM/XAF, CI|SN|BJ|BF/XOF.`,
+        error_code: "UNSUPPORTED_CORRIDOR",
+      }, 422);
+    }
+
     // Fetch commitments with recipients
     const { data: commitments, error: commitError } = await supabase
       .from("commitments")
-      .select("id, recipient_id, amount_gbp, amount_destination, fx_rate, receiving_method, destination_currency, recipient:recipients(id, name, country, receiving_method, phone, mobile_money_network, mobile_money_provider, bank_code, account_number, destination_country, currency, flutterwave_recipient_id)")
+      .select(
+        "id, recipient_id, amount_gbp, amount_destination, fx_rate, receiving_method, destination_currency, recipient:recipients(id, name, country, receiving_method, phone, mobile_money_network, mobile_money_provider, bank_code, account_number, destination_country, currency)",
+      )
       .eq("plan_id", payload.plan_id)
       .order("created_at", { ascending: true });
 
@@ -371,31 +350,86 @@ Deno.serve(async (req: Request) => {
           error_code: "RECIPIENT_CURRENCY_MISMATCH",
         }, 400);
       }
+
+      // Payout method must be bank or mobile_money for these corridors
+      const method = String(c.receiving_method ?? recipient.receiving_method ?? "").toLowerCase();
+      if (method && method !== "bank_account" && method !== "mobile_money" && method !== "cash_pickup") {
+        return jsonResponse({
+          success: false,
+          error: `Unsupported receiving method ${method} for commitment ${c.id}`,
+          error_code: "UNSUPPORTED_PAYOUT_METHOD",
+        }, 400);
+      }
     }
 
-    // Fetch FX rate from Flutterwave
-    const accessToken = await getAccessToken();
-    const fxAmount = planPricingMode === "fixed_source"
-      ? commitments.reduce((sum, c) => {
-          const allocation = allocationsByCommitmentId.get(c.id)!;
-          return sum + (allocation.source_amount ?? 0);
-        }, 0)
-      : commitments.reduce((sum, c) => {
-          const allocation = allocationsByCommitmentId.get(c.id)!;
-          return sum + (allocation.destination_amount ?? 0);
-        }, 0);
+    // Build provisional totals from allocations so we know what to quote
+    let provisionalSource = 0;
+    let provisionalDestination = 0;
 
-    if (fxAmount <= 0) {
+    for (const c of commitments) {
+      const allocation = allocationsByCommitmentId.get(c.id)!;
+      if (planPricingMode === "fixed_source") {
+        const src = Number(allocation.source_amount ?? c.amount_gbp ?? 0);
+        if (!(src > 0)) {
+          return jsonResponse({
+            success: false,
+            error: `source_amount must be > 0 for commitment ${c.id}`,
+            error_code: "INVALID_SOURCE_AMOUNT",
+          }, 400);
+        }
+        provisionalSource += src;
+      } else {
+        const dest = Number(allocation.destination_amount ?? c.amount_destination ?? 0);
+        if (!(dest > 0)) {
+          return jsonResponse({
+            success: false,
+            error: `destination_amount must be > 0 for commitment ${c.id}`,
+            error_code: "INVALID_DESTINATION_AMOUNT",
+          }, 400);
+        }
+        provisionalDestination += dest;
+      }
+    }
+
+    if (planPricingMode === "fixed_source" && provisionalSource <= 0) {
+      return jsonResponse({ success: false, error: "Total amount must be greater than zero" }, 400);
+    }
+    if (planPricingMode === "fixed_destination" && provisionalDestination <= 0) {
       return jsonResponse({ success: false, error: "Total amount must be greater than zero" }, 400);
     }
 
-    const { rate: fxRate } = await fetchFxRate(accessToken, "GBP", planDestinationCurrency, fxAmount);
+    // Executable Fincra conversion quote for the whole order
+    const quoteAction: "send" | "receive" = planPricingMode === "fixed_source" ? "send" : "receive";
+    const quoteAmount = planPricingMode === "fixed_source" ? provisionalSource : provisionalDestination;
 
-    if (fxRate <= 0) {
-      return jsonResponse({ success: false, error: "Failed to fetch valid FX rate from Flutterwave" }, 502);
+    let fincraQuote: FincraConversionQuote;
+    try {
+      fincraQuote = await generateFincraConversionQuote({
+        sourceCurrency: "GBP",
+        destinationCurrency: planDestinationCurrency,
+        amount: Number(quoteAmount.toFixed(2)),
+        action: quoteAction,
+        businessId,
+      });
+    } catch (error) {
+      console.error("Fincra conversion quote failed", error instanceof FincraApiError
+        ? { status: error.status, code: error.code }
+        : { message: error instanceof Error ? error.message : "unknown" });
+
+      const status = error instanceof FincraApiError
+        ? (error.status >= 400 && error.status < 500 ? 422 : 502)
+        : 502;
+
+      return jsonResponse({
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to obtain Fincra conversion quote",
+        error_code: error instanceof FincraApiError ? (error.code ?? "FINCRA_QUOTE_FAILED") : "FINCRA_QUOTE_FAILED",
+      }, status);
     }
 
-    // Calculate per-recipient amounts based on pricing mode
+    const fxRate = fincraQuote.rate;
+
+    // Per-recipient breakdown using the locked executable rate
     const recipientBreakdown: Array<{
       commitment_id: string;
       recipient_name: string;
@@ -426,10 +460,12 @@ Deno.serve(async (req: Request) => {
       totalSourceAmount += sourceAmount;
       totalDestinationAmount += destinationAmount;
 
-      // Determine payout method from recipient
-      const payoutMethod = c.receiving_method === "bank_account" ? "bank"
-        : c.receiving_method === "mobile_money" ? "mobile_money"
-        : c.receiving_method === "cash_pickup" ? "cash_pickup"
+      const payoutMethod = c.receiving_method === "bank_account"
+        ? "bank"
+        : c.receiving_method === "mobile_money"
+        ? "mobile_money"
+        : c.receiving_method === "cash_pickup"
+        ? "cash_pickup"
         : "mobile_money";
 
       recipientBreakdown.push({
@@ -442,93 +478,98 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // For fixed_source: validate that allocated source amounts match total
-    if (planPricingMode === "fixed_source") {
-      const allocatedTotal = commitments.reduce((sum, c) => {
-        const allocation = allocationsByCommitmentId.get(c.id)!;
-        return sum + (allocation.source_amount ?? 0);
-      }, 0);
-      if (Math.abs(allocatedTotal - totalSourceAmount) > 0.01) {
-        return jsonResponse({
-          success: false,
-          error: `Allocation mismatch: allocated ${allocatedTotal} does not equal total ${totalSourceAmount}`,
-          error_code: "ALLOCATION_MISMATCH",
-        }, 400);
-      }
-    }
-
     const sourceAmount = Number(totalSourceAmount.toFixed(2));
+    const destinationAmount = Number(totalDestinationAmount.toFixed(2));
     const sendaFee = calculateSendaFee(sourceAmount);
 
-    // Fee lookup amount is the card charge before Flutterwave's own cost is known
-    // (source + Senda fee), so the lookup isn't circular against customer_pays.
-    const collectionLookupAmount = fromMinorUnits(
-      toMinorUnits(sourceAmount) + toMinorUnits(sendaFee),
-    );
-
-    let collectionFee: number;
-    try {
-      collectionFee = await fetchCollectionFee(accessToken, collectionLookupAmount);
-    } catch (error) {
-      if (error instanceof FlutterwaveFeeError && error.status === 501) {
-        // Sandbox does not implement fee lookup for this request; absorb the
-        // unknown provider cost into Senda rather than inventing a confirmed fee.
-        console.warn("Flutterwave /fees is not implemented in this environment; provider cost unknown and absorbed by Senda", {
-          endpoint: "/fees",
-          status: error.status,
-        });
-        collectionFee = 0;
-      } else {
-        console.error("Failed to fetch Flutterwave collection fee:", error);
-        return jsonResponse({
-          success: false,
-          error: "Unable to obtain the Flutterwave collection fee for this quote.",
-          error_code: "COLLECTION_FEE_UNAVAILABLE",
-        }, 502);
-      }
-    }
-
+    // Conversion fee is from the Fincra quote (business-borne). Collection fee is
+    // unknown until checkout completes — do not invent it.
+    const providerConversionFee = fincraQuote.fee;
+    const collectionFee: number | null = null;
     const sendaFxMargin = 0;
-    const processingFee = fromMinorUnits(
-      toMinorUnits(collectionFee) + toMinorUnits(sendaFee),
-    );
+
+    // Customer pays principal + Senda fee. Provider conversion fee is settled
+    // from Senda's business wallet after GBP collection. Collection cost is
+    // applied once verified at checkout.
+    const processingFee = sendaFee;
     const customerPays = fromMinorUnits(
       toMinorUnits(sourceAmount) + toMinorUnits(processingFee),
     );
 
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + 60_000);
+    // Trust Fincra expiry (typically 30s). Do not extend.
+    const expiresAt = new Date(fincraQuote.expireAt);
 
-    // Update the plan with quote data
+    // Persist quote on plan (including conversion quote reference for later stage)
+    const planUpdate: Record<string, unknown> = {
+      source_amount: sourceAmount,
+      destination_amount: destinationAmount,
+      customer_pays: customerPays,
+      customer_fx_rate: fxRate,
+      provider_fx_rate: fxRate,
+      provider_fee: providerConversionFee,
+      senda_fee: sendaFee,
+      processing_fee: processingFee,
+      senda_fx_margin: sendaFxMargin,
+      actual_collection_cost: collectionFee,
+      quote_created_at: now.toISOString(),
+      quote_expires_at: expiresAt.toISOString(),
+      quote_locked_at: null,
+      status: "quoted",
+      total_gbp: sourceAmount,
+      funding_provider: "fincra",
+      conversion_status: "quoted",
+      fincra_conversion_quote_reference: fincraQuote.reference,
+      conversion_source_amount: sourceAmount,
+      conversion_destination_amount: destinationAmount,
+      conversion_rate: fxRate,
+      conversion_fee: providerConversionFee,
+      conversion_expires_at: expiresAt.toISOString(),
+    };
+
     const { error: updateError } = await supabase
       .from("plans")
-      .update({
-        source_amount: sourceAmount,
-        destination_amount: Number(totalDestinationAmount.toFixed(2)),
-        customer_pays: customerPays,
-        customer_fx_rate: fxRate,
-        provider_fx_rate: fxRate,
-        provider_fee: collectionFee,
-        senda_fee: sendaFee,
-        processing_fee: processingFee,
-        senda_fx_margin: sendaFxMargin,
-        quote_created_at: now.toISOString(),
-        quote_expires_at: expiresAt.toISOString(),
-        quote_locked_at: null,
-        status: "quoted",
-        total_gbp: sourceAmount,
-      })
+      .update(planUpdate)
       .eq("id", payload.plan_id)
       .eq("user_id", userId);
 
     if (updateError) {
-      console.error("Failed to update plan with quote:", updateError);
-      return jsonResponse({ success: false, error: "Failed to save quote" }, 500);
+      // Foundation migration may not be applied yet — fall back to legacy columns only
+      console.warn("Plan update with Fincra conversion fields failed; retrying with core columns", {
+        code: updateError.code,
+        message: updateError.message,
+      });
+
+      const { error: fallbackError } = await supabase
+        .from("plans")
+        .update({
+          source_amount: sourceAmount,
+          destination_amount: destinationAmount,
+          customer_pays: customerPays,
+          customer_fx_rate: fxRate,
+          provider_fx_rate: fxRate,
+          provider_fee: providerConversionFee,
+          senda_fee: sendaFee,
+          processing_fee: processingFee,
+          senda_fx_margin: sendaFxMargin,
+          quote_created_at: now.toISOString(),
+          quote_expires_at: expiresAt.toISOString(),
+          quote_locked_at: null,
+          status: "quoted",
+          total_gbp: sourceAmount,
+        })
+        .eq("id", payload.plan_id)
+        .eq("user_id", userId);
+
+      if (fallbackError) {
+        console.error("Failed to update plan with quote:", fallbackError);
+        return jsonResponse({ success: false, error: "Failed to save quote" }, 500);
+      }
     }
 
-    // Update each commitment with the calculated amounts
+    // Update each commitment with calculated amounts
     for (const rb of recipientBreakdown) {
-      await supabase
+      const { error: commitUpdateError } = await supabase
         .from("commitments")
         .update({
           amount_gbp: rb.source_amount,
@@ -538,25 +579,39 @@ Deno.serve(async (req: Request) => {
         })
         .eq("id", rb.commitment_id)
         .eq("user_id", userId);
+
+      if (commitUpdateError) {
+        console.error("Failed to update commitment after quote", {
+          commitment_id: rb.commitment_id,
+          error: commitUpdateError.message,
+        });
+        // Continue; plan quote is already stored. Client can re-quote if needed.
+      }
     }
 
     return jsonResponse({
       success: true,
       plan_id: payload.plan_id,
+      provider: "fincra",
       pricing_mode: planPricingMode,
       source_currency: "GBP",
       destination_country: planDestinationCountry,
       destination_currency: planDestinationCurrency,
       source_amount: sourceAmount,
-      destination_amount: Number(totalDestinationAmount.toFixed(2)),
+      destination_amount: destinationAmount,
       customer_pays: customerPays,
       customer_fx_rate: fxRate,
       provider_fx_rate: fxRate,
+      provider_fee: providerConversionFee,
       senda_fee: sendaFee,
       processing_fee: processingFee,
       senda_fx_margin: sendaFxMargin,
+      actual_collection_cost: collectionFee,
+      quote_reference: fincraQuote.reference,
       quote_created_at: now.toISOString(),
       quote_expires_at: expiresAt.toISOString(),
+      quote_note:
+        "Executable Fincra conversion quote. Valid for ~30 seconds. GBP collection is separate; conversion runs after GBP settles into the merchant wallet.",
       recipients: recipientBreakdown,
     });
   } catch (error) {
