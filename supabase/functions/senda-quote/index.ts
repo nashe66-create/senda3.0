@@ -2,10 +2,11 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.58.0";
 import { fincraRequest, FincraApiError } from "../_shared/fincra.ts";
 
-const corsHeaders = {
+const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, apikey, x-client-info",
+  "Access-Control-Max-Age": "86400",
 };
 
 /** Supported pilot corridors: Mobile Money + Bank (Fincra). */
@@ -80,10 +81,12 @@ async function generateFincraConversionQuote(params: {
     beneficiaryType: "individual",
   };
 
+  // Keep provider I/O well under the Edge idle timeout.
   const response = await fincraRequest<any>("/quotes/generate", {
     method: "POST",
     body,
     idempotencyKey: `SENDA-QUOTE-${crypto.randomUUID()}`,
+    timeoutMs: 12_000,
   });
 
   const root = response?.data ?? response;
@@ -106,7 +109,6 @@ async function generateFincraConversionQuote(params: {
     throw new FincraApiError("Fincra quote response missing destination amount", 502, "INVALID_DESTINATION_AMOUNT", response);
   }
 
-  // Default 30s if provider omits expiry
   const resolvedExpireAt = expireAt || new Date(Date.now() + 30_000).toISOString();
 
   return {
@@ -123,8 +125,16 @@ async function generateFincraConversionQuote(params: {
 }
 
 Deno.serve(async (req: Request) => {
+  // CORS preflight must return before any auth, DB, or provider work.
+  // A hang here produces IDLE_TIMEOUT 504 with only a "shutdown" log.
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  console.log("senda-quote request", { method: req.method, path: new URL(req.url).pathname });
+
+  if (req.method !== "POST") {
+    return jsonResponse({ success: false, error: "Method not allowed" }, 405);
   }
 
   try {
@@ -146,6 +156,7 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -180,7 +191,6 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "At least one allocation is required" }, 400);
     }
 
-    // Verify the user owns the plan
     const { data: plan, error: planError } = await supabase
       .from("plans")
       .select("id, user_id, status, total_gbp, pricing_mode, destination_country, destination_currency")
@@ -206,7 +216,6 @@ Deno.serve(async (req: Request) => {
       .eq("id", userId)
       .maybeSingle();
 
-    // Provider-neutral KYC gate (Flutterwave sender_id no longer required)
     if (profile?.kyc_status !== "verified") {
       return jsonResponse({
         success: false,
@@ -235,7 +244,6 @@ Deno.serve(async (req: Request) => {
       }, 400);
     }
 
-    // Corridor allow-list for current pilot set
     const corridor = SUPPORTED_CORRIDORS[planDestinationCountry];
     if (!corridor || corridor.currency !== planDestinationCurrency) {
       return jsonResponse({
@@ -245,7 +253,6 @@ Deno.serve(async (req: Request) => {
       }, 422);
     }
 
-    // Fetch commitments with recipients
     const { data: commitments, error: commitError } = await supabase
       .from("commitments")
       .select(
@@ -262,7 +269,6 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "No recipients in this plan" }, 400);
     }
 
-    // Validate allocation mapping by commitment_id (no array-order reliance)
     const planCommitmentIds = new Set(commitments.map((c) => c.id));
     const allocationsByCommitmentId = new Map<string, (typeof payload.allocations)[number]>();
 
@@ -313,7 +319,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Server-side corridor validation against authoritative plan data
     for (const c of commitments) {
       const recipient = c.recipient as any;
       if (!recipient) {
@@ -351,7 +356,6 @@ Deno.serve(async (req: Request) => {
         }, 400);
       }
 
-      // Payout method must be bank or mobile_money for these corridors
       const method = String(c.receiving_method ?? recipient.receiving_method ?? "").toLowerCase();
       if (method && method !== "bank_account" && method !== "mobile_money" && method !== "cash_pickup") {
         return jsonResponse({
@@ -362,7 +366,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Build provisional totals from allocations so we know what to quote
     let provisionalSource = 0;
     let provisionalDestination = 0;
 
@@ -398,7 +401,6 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Total amount must be greater than zero" }, 400);
     }
 
-    // Executable Fincra conversion quote for the whole order
     const quoteAction: "send" | "receive" = planPricingMode === "fixed_source" ? "send" : "receive";
     const quoteAmount = planPricingMode === "fixed_source" ? provisionalSource : provisionalDestination;
 
@@ -429,7 +431,6 @@ Deno.serve(async (req: Request) => {
 
     const fxRate = fincraQuote.rate;
 
-    // Per-recipient breakdown using the locked executable rate
     const recipientBreakdown: Array<{
       commitment_id: string;
       recipient_name: string;
@@ -482,25 +483,18 @@ Deno.serve(async (req: Request) => {
     const destinationAmount = Number(totalDestinationAmount.toFixed(2));
     const sendaFee = calculateSendaFee(sourceAmount);
 
-    // Conversion fee is from the Fincra quote (business-borne). Collection fee is
-    // unknown until checkout completes — do not invent it.
     const providerConversionFee = fincraQuote.fee;
     const collectionFee: number | null = null;
     const sendaFxMargin = 0;
 
-    // Customer pays principal + Senda fee. Provider conversion fee is settled
-    // from Senda's business wallet after GBP collection. Collection cost is
-    // applied once verified at checkout.
     const processingFee = sendaFee;
     const customerPays = fromMinorUnits(
       toMinorUnits(sourceAmount) + toMinorUnits(processingFee),
     );
 
     const now = new Date();
-    // Trust Fincra expiry (typically 30s). Do not extend.
     const expiresAt = new Date(fincraQuote.expireAt);
 
-    // Persist quote on plan (including conversion quote reference for later stage)
     const planUpdate: Record<string, unknown> = {
       source_amount: sourceAmount,
       destination_amount: destinationAmount,
@@ -534,7 +528,6 @@ Deno.serve(async (req: Request) => {
       .eq("user_id", userId);
 
     if (updateError) {
-      // Foundation migration may not be applied yet — fall back to legacy columns only
       console.warn("Plan update with Fincra conversion fields failed; retrying with core columns", {
         code: updateError.code,
         message: updateError.message,
@@ -567,7 +560,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Update each commitment with calculated amounts
     for (const rb of recipientBreakdown) {
       const { error: commitUpdateError } = await supabase
         .from("commitments")
@@ -585,7 +577,6 @@ Deno.serve(async (req: Request) => {
           commitment_id: rb.commitment_id,
           error: commitUpdateError.message,
         });
-        // Continue; plan quote is already stored. Client can re-quote if needed.
       }
     }
 
