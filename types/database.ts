@@ -241,10 +241,40 @@ export interface QuoteRecipientBreakdown {
   payout_method: PayoutMethod;
 }
 
+/** Fee line with explicit verification status — never invent amounts. */
+export type FeeVerification = 'verified' | 'not_applicable' | 'unknown_until_payment';
+
+export interface QuoteFeeLine {
+  amount: number | null;
+  currency: string;
+  status: FeeVerification;
+  /** Short customer-facing label */
+  label: string;
+  /** Optional detail for transparency */
+  note?: string;
+}
+
+export interface QuoteFeeBreakdown {
+  /** FX conversion fee returned by Fincra conversion quote */
+  conversion: QuoteFeeLine;
+  /** Card/VA collection fee — often only known after settlement for GBP */
+  collection: QuoteFeeLine;
+  /** Per-payout fees if quoted; otherwise unknown until payout */
+  payout: QuoteFeeLine;
+  /** Explicit Senda product fee (0 while disabled) */
+  senda: QuoteFeeLine;
+  /** Sum of verified fee lines only; null if any required leg is unknown */
+  total_verified_fees: number | null;
+  /** True when customer_pays is a complete all-in figure */
+  all_in_complete: boolean;
+  transparency_note: string;
+}
+
 export interface QuoteResult {
   success: boolean;
   plan_id: string;
   pricing_mode: PricingMode;
+  provider?: string;
   source_currency: string;
   destination_country: string;
   destination_currency: string;
@@ -257,8 +287,12 @@ export interface QuoteResult {
   senda_fee: number;
   processing_fee: number;
   senda_fx_margin: number;
+  actual_collection_cost?: number | null;
+  quote_reference?: string;
   quote_created_at: string;
   quote_expires_at: string;
+  quote_note?: string;
+  fee_breakdown?: QuoteFeeBreakdown;
   recipients: QuoteRecipientBreakdown[];
   error?: string;
   error_code?: string;
