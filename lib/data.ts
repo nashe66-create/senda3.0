@@ -1143,7 +1143,6 @@ export async function collectCard(payload: {
   next_action?: any;
   error?: string;
   error_code?: string;
-  charge_id?: string | null;
 }> {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
@@ -1253,6 +1252,84 @@ export async function verifyCharge(transactionId: string): Promise<{
     return { success: false, error: data?.error ?? 'Charge verification failed' };
   }
   return data;
+}
+
+/* =========================================================
+   FINCRA HOSTED CHECKOUT
+   ========================================================= */
+
+export async function createFincraCheckout(planId: string): Promise<{
+  success: boolean;
+  reference?: string;
+  checkoutUrl?: string;
+  error?: string;
+  error_code?: string;
+}> {
+  const supabaseUrl = await getSupabaseUrl();
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${supabaseUrl}/functions/v1/fincra-checkout`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ plan_id: planId }),
+  });
+
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    return {
+      success: false,
+      reference: result?.data?.reference,
+      error: result?.error ?? 'Could not start secure checkout',
+      error_code: result?.error_code,
+    };
+  }
+
+  const checkout = result.data?.fincra ?? result.data ?? {};
+  const checkoutUrl = findFincraCheckoutUrl(checkout);
+  return {
+    success: true,
+    reference: result.data?.reference,
+    checkoutUrl,
+    error: checkoutUrl ? undefined : 'Checkout started but did not return a hosted payment link',
+  };
+}
+
+function findFincraCheckoutUrl(value: unknown, depth = 0): string | undefined {
+  if (!value || typeof value !== 'object' || depth > 3) return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ['checkoutUrl', 'checkout_url', 'paymentUrl', 'payment_url', 'redirectUrl', 'redirect_url', 'url']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.startsWith('https://')) return candidate;
+  }
+  for (const key of ['data', 'checkout', 'payment', 'links']) {
+    const candidate = findFincraCheckoutUrl(record[key], depth + 1);
+    if (candidate) return candidate;
+  }
+  return undefined;
+}
+
+export async function verifyFincraCheckout(reference: string): Promise<{
+  success: boolean;
+  verified?: boolean;
+  status?: string;
+  reason?: string;
+  error?: string;
+}> {
+  const supabaseUrl = await getSupabaseUrl();
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/fincra-checkout?reference=${encodeURIComponent(reference)}`,
+    { method: 'GET', headers },
+  );
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    return { success: false, error: result?.error ?? 'Payment status check failed' };
+  }
+  return {
+    success: true,
+    verified: result.data?.verified === true,
+    status: result.data?.status,
+    reason: result.data?.reason,
+  };
 }
 
 /* =========================================================

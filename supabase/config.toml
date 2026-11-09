@@ -1,0 +1,4 @@
+project_id = "senda3"
+
+[functions.fincra-webhook]
+verify_jwt = false
