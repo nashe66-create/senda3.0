@@ -2,7 +2,7 @@
 
 This directory is the maintained reference for what Senda is, how its domain works, how money moves, how the current Fincra implementation works and how contributors should change it safely.
 
-**Mandatory Copilot session-start reading:** at the start of every new Copilot Chat, agent or coding session, read this README and every document listed in the `SENDA SESSION START READING` section of `.github/copilot-instructions.md` in full, before responding to the first task or making a plan/change. Do not rely on a previous session's memory. Copilot must report the active branch/commit and confirm which files it actually read; any unreadable or missing document must be disclosed.
+**Mandatory Copilot session-start reading:** at the start of every new Copilot Chat, agent or coding session, read this README and every document listed in the `Mandatory session-start protocol — every new Copilot session` section of `.github/copilot-instructions.md` in full, before responding to the first task or making a plan/change. Do not rely on a previous session's memory. Copilot must report the active branch/commit and confirm which files it actually read; any unreadable or missing document must be disclosed.
 
 **Start here:** read the product overview first. Then read the domain model and money-movement lifecycle before changing plans, commitments, payments or payouts.
 
