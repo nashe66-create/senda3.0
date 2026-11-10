@@ -73,7 +73,7 @@ The fincra-checkout POST function:
 - persists a stable Fincra checkout/collection reference and pending states on the transaction and plan;
 - calls Fincra POST /checkout/payments with GBP amount, reference, customer data and plan/user metadata.
 
-A browser redirect, WebBrowser return or successful popup opening is not proof of collection. The client uses fincra-checkout GET with the reference to ask the server to verify the status. The app currently polls while processing and checks again when the app resumes.
+A browser redirect, WebBrowser return or successful popup opening is not proof of collection. The client uses fincra-checkout GET with the reference to ask the server to verify the status. The app currently polls while processing and checks again when the app resumes. When that lookup reconciles a successful collection, the GET handler also invokes fincra-conversion; the signed webhook path can invoke the same stage. The conversion claim/reference guards must make overlapping triggers safe.
 
 The collection must be verified against the provider's reference, amount GBP, transaction amount, plan customer_pays value, quote lock and eligible plan/payment states. A successful collection changes the transaction to successful, the plan payment_status to successful and the plan status to funded; eligible commitments become ready. This transition is performed by the database reconciliation function, not by client UI state.
 
@@ -100,6 +100,8 @@ Do not assume a customer payment has already arrived in the Fincra wallet merely
 ## 7. Stage 5 — recipient payouts
 
 Once conversion is verified, invokeReadyFincraPayouts selects commitments whose status is ready and invokes fincra-payout for each commitment.
+
+The current quote helper maps bank_account to bank, mobile_money to mobile_money and cash_pickup to cash_pickup. Its default (including bill_payment) is mobile_money. Treat bill_payment as unsupported/unverified until an explicit Fincra mapping and test exist.
 
 The payout function:
 - authenticates the customer or trusted internal invocation;
