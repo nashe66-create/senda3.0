@@ -34,7 +34,7 @@ export default function NewPlanScreen() {
   const [recurring, setRecurring] = useState<RecurringType>(recurringParam || 'one_off');
   const [nextRunDate, setNextRunDate] = useState(next_run_date || '');
   const [showRecurringOptions, setShowRecurringOptions] = useState(false);
-  const [destinationCountry, setDestinationCountry] = useState('');
+  const [destinationCountry, setDestinationCountry] = useState(destination_country || '');
   const [corridorCountries, setCorridorCountries] = useState<PayoutCorridorCountry[]>([]);
   const [countriesLoading, setCountriesLoading] = useState(true);
   const [pricingMode, setPricingMode] = useState<PricingMode | null>(pricing_mode || null);
@@ -68,18 +68,20 @@ export default function NewPlanScreen() {
     }, [loadRecipients])
   );
 
-  useEffect(() => {
-    if (destination_country) setDestinationCountry(destination_country);
-  }, [destination_country]);
-
   const selectedCountryInfo = corridorCountries.find((c) => c.country_code === destinationCountry);
+  const [processedCreatedRecipientId, setProcessedCreatedRecipientId] = useState<string | undefined>();
+  const createdRecipient = recipients.find((recipient) => recipient.id === created_recipient_id);
 
-  useEffect(() => {
-    if (!created_recipient_id || recipients.length === 0) return;
-    const createdRecipient = recipients.find((recipient) => recipient.id === created_recipient_id);
-    if (!createdRecipient || createdRecipient.country !== destinationCountry || createdRecipient.currency !== selectedCountryInfo?.currency) return;
+  if (
+    created_recipient_id &&
+    created_recipient_id !== processedCreatedRecipientId &&
+    createdRecipient &&
+    createdRecipient.country === destinationCountry &&
+    createdRecipient.currency === selectedCountryInfo?.currency
+  ) {
+    setProcessedCreatedRecipientId(created_recipient_id);
     setSelectedRecipientIds((current) => current.includes(createdRecipient.id) ? current : [...current, createdRecipient.id]);
-  }, [created_recipient_id, recipients, destinationCountry, selectedCountryInfo?.currency]);
+  }
 
   const handleCreate = async () => {
     let createdPlanId: string | null = null;
@@ -317,7 +319,7 @@ export default function NewPlanScreen() {
               ) : eligibleRecipients.length === 0 ? (
                 <View>
                   <Text style={styles.peopleEmptyText}>
-                    You don't have anyone set up for this destination yet.
+                    You don&apos;t have anyone set up for this destination yet.
                   </Text>
                   <Button
                     onPress={() => {

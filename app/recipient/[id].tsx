@@ -655,6 +655,12 @@ export default function RecipientDetailScreen() {
             const corridorCurrency = countries.find(
               (item) => item.country_code === data.country
             )?.currency?.trim().toUpperCase();
+            if (
+              corridorCurrency &&
+              (!data.currency || data.currency.toUpperCase() === corridorCurrency)
+            ) {
+              setCurrency(corridorCurrency);
+            }
             if (data.currency && corridorCurrency && data.currency.toUpperCase() !== corridorCurrency) {
               setOptionsError(
                 "This recipient's saved currency does not match the selected corridor. Review the destination before saving."
@@ -789,14 +795,6 @@ export default function RecipientDetailScreen() {
   const currencyMismatch =
     Boolean(currency && resolvedCurrency && currency.toUpperCase() !== resolvedCurrency);
 
-  useEffect(() => {
-    if (resolvedCurrency && !currencyMismatch) {
-      setCurrency(resolvedCurrency);
-    }
-    // Currency is derived from the selected corridor country.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedCurrency]);
-
   const payoutMethods: string[] =
     !country
       ? ['mobile_money', 'bank_account']
@@ -818,88 +816,50 @@ export default function RecipientDetailScreen() {
      SELECT COUNTRY
      ======================================================= */
 
-  const handleCountryChange =
-    async (
-      newCountry: string
-    ) => {
-      if (
-        !newCountry ||
-        newCountry === country
-      ) {
-        return;
-      }
+  async function handleCountryChange(newCountry: string) {
+    if (!newCountry || newCountry === country) {
+      return;
+    }
 
-      setCountry(
-        newCountry
-      );
+    setCountry(newCountry);
 
-      setCurrency(
-        ''
-      );
+    const newCountryCurrency = corridorCountries.find(
+      (item) => item.country_code === newCountry
+    )?.currency?.trim().toUpperCase();
+    setCurrency(newCountryCurrency || '');
 
-      setMobileMoneyProvider(
-        ''
-      );
+    setMobileMoneyProvider('');
 
-      setBankCode(
-        ''
-      );
+    setBankCode('');
 
-      setFlutterwaveNetworkCode(
-        null
-      );
+    setFlutterwaveNetworkCode(null);
 
-      setFlutterwaveBankName(
-        null
-      );
+    setFlutterwaveBankName(null);
 
-      setFlutterwaveRecipientId(
-        null
-      );
+    setFlutterwaveRecipientId(null);
 
-      await loadCountryOptions(
-        newCountry
-      );
-    };
+    await loadCountryOptions(newCountry);
+  }
 
   /* =======================================================
      SELECT METHOD
      ======================================================= */
 
-  const handleReceivingMethodChange =
-    (
-      method: ReceivingMethod
-    ) => {
-      setReceivingMethod(
-        method
-      );
+  function handleReceivingMethodChange(method: ReceivingMethod) {
+    setReceivingMethod(method);
 
-      if (
-        method !==
-        'mobile_money'
-      ) {
-        setMobileMoneyProvider(
-          ''
-        );
+    if (method !== 'mobile_money') {
+      setMobileMoneyProvider('');
 
-        setFlutterwaveNetworkCode(
-          null
-        );
-      }
+      setFlutterwaveNetworkCode(null);
+    }
 
-      if (
-        method !==
-        'bank_account'
-      ) {
-        setBankCode(
-          ''
-        );
+    if (method !== 'bank_account') {
+      setBankCode('');
 
-        setFlutterwaveBankName(
-          null
-        );
-      }
-    };
+      setFlutterwaveBankName(null);
+    }
+  }
 
   /* =======================================================
      SELECT CURRENCY
