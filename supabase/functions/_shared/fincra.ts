@@ -115,11 +115,13 @@ export function getFincraQuotePath(): string {
 export async function createFincraCheckout<T = unknown>(body: Record<string, unknown>, reference?: string) {
   const checkoutReference = reference ??
     (typeof body.reference === "string" ? body.reference : `senda-checkout-${crypto.randomUUID()}`);
+  const { business, ...checkoutBody } = body;
   return fincraRequest<T>("POST", "/checkout/payments", {
-    ...body,
+    ...checkoutBody,
     reference: checkoutReference,
   }, {
     idempotencyKey: checkoutReference,
+    extraHeaders: typeof business === "string" ? { "x-business-id": business } : {},
   });
 }
 
@@ -133,13 +135,22 @@ export async function listFincraWallets<T = unknown>(query?: Record<string, stri
   return fincraRequest<T>("GET", path);
 }
 
+export async function listFincraPayoutProviders<T = unknown>(query: {
+  country: string;
+  currency: string;
+  paymentDestination: "bank_account" | "mobile_money_wallet" | "cash_pick_up" | "settlement_account";
+}) {
+  const search = new URLSearchParams(query);
+  return fincraRequest<T>("GET", `/core/banks?${search.toString()}`);
+}
+
 export async function getFincraWallet<T = unknown>(walletId: string) {
   return fincraRequest<T>("GET", `/wallets/${encodeURIComponent(walletId)}`);
 }
 
 export async function initiateFincraConversion<T = unknown>(body: Record<string, unknown>) {
   return fincraRequest<T>("POST", "/conversions/initiate", body, {
-    idempotencyKey: body.reference ? String(body.reference) : `senda-conversion-${crypto.randomUUID()}`,
+    idempotencyKey: body.customerReference ? String(body.customerReference) : `senda-conversion-${crypto.randomUUID()}`,
   });
 }
 
@@ -149,12 +160,16 @@ export async function getFincraConversionByReference<T = unknown>(reference: str
 
 export async function createFincraPayout<T = unknown>(body: Record<string, unknown>) {
   return fincraRequest<T>("POST", "/disbursements/payouts", body, {
-    idempotencyKey: body.reference ? String(body.reference) : `senda-payout-${crypto.randomUUID()}`,
+    idempotencyKey: body.customerReference ? String(body.customerReference) : `senda-payout-${crypto.randomUUID()}`,
   });
 }
 
 export async function getFincraPayoutByReference<T = unknown>(reference: string) {
   return fincraRequest<T>("GET", `/disbursements/payouts/reference/${encodeURIComponent(reference)}`);
+}
+
+export async function getFincraPayoutByCustomerReference<T = unknown>(customerReference: string) {
+  return fincraRequest<T>("GET", `/disbursements/payouts/customer-reference/${encodeURIComponent(customerReference)}`);
 }
 
 export async function verifyFincraWebhookSignature(

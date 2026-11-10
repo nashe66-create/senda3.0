@@ -105,15 +105,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const amountValue = stage === "conversion"
-      ? data.destinationAmount ?? data.destination_amount ?? data.amountToReceive ?? data.amount_to_receive
-      : data.amount ?? data.paidAmount ?? data.paid_amount ?? data.chargedAmount;
+      ? data.destinationAmount ?? data.destination_amount ?? data.amountToReceive ?? data.amount_to_receive ?? data.amountReceived
+      : stage === "payout"
+      ? data.amountReceived ?? data.amount_received ?? data.amount ?? data.paidAmount ?? data.paid_amount ?? data.chargedAmount
+      : data.amount ?? data.sourceAmount ?? data.source_amount ?? data.destinationAmount ?? data.destination_amount ?? data.amountReceived ?? data.amount_received;
     const amount = amountValue == null ? null : Number(amountValue);
     if (amount !== null && !Number.isFinite(amount)) {
       return jsonResponse({ success: false, error: "Webhook amount is invalid" }, 400);
     }
-    const currencyValue = stage === "conversion"
+    const currencyValue = stage === "conversion" || stage === "payout"
       ? data.destinationCurrency ?? data.destination_currency ?? data.currency
-      : data.currency;
+      : data.currency ?? data.sourceCurrency ?? data.source_currency ?? data.destinationCurrency ?? data.destination_currency;
     const currency = currencyValue == null ? null : String(currencyValue);
     const eventId = String(payload.eventId ?? payload.event_id ?? payload.webhookId ?? payload.webhook_id ?? "");
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawBody));
@@ -136,6 +138,24 @@ Deno.serve(async (req: Request) => {
     if (error) {
       console.error("Failed to reconcile Fincra webhook:", error);
       throw new Error("Failed to reconcile Fincra webhook");
+    }
+
+    if (stage === "conversion" && (result?.applied || result?.duplicate)) {
+      const conversionState = normalizedStatus === "successful"
+        ? "confirmed"
+        : normalizedStatus === "failed" || normalizedStatus === "reversed"
+        ? "failed"
+        : normalizedStatus;
+      const { error: conversionStateError } = await supabase
+        .from("plans")
+        .update({
+          conversion_status: conversionState,
+          conversion_confirmed_at: normalizedStatus === "successful" ? new Date().toISOString() : null,
+        })
+        .eq("fincra_conversion_reference", reference);
+      if (conversionStateError) {
+        throw new Error(`Failed to persist Fincra conversion lifecycle state: ${conversionStateError.message}`);
+      }
     }
 
     if ([

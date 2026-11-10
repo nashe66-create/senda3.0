@@ -1296,7 +1296,7 @@ export async function createFincraCheckout(planId: string): Promise<{
 function findFincraCheckoutUrl(value: unknown, depth = 0): string | undefined {
   if (!value || typeof value !== 'object' || depth > 3) return undefined;
   const record = value as Record<string, unknown>;
-  for (const key of ['checkoutUrl', 'checkout_url', 'paymentUrl', 'payment_url', 'redirectUrl', 'redirect_url', 'url']) {
+  for (const key of ['link', 'checkoutUrl', 'checkout_url', 'paymentUrl', 'payment_url', 'redirectUrl', 'redirect_url', 'url']) {
     const candidate = record[key];
     if (typeof candidate === 'string' && candidate.startsWith('https://')) return candidate;
   }

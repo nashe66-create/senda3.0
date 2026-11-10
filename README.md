@@ -16,6 +16,8 @@ The default development command uses Expo Tunnel and targets Expo Go, so the ter
 
 ## Fincra payments
 
+Current implementation status and remaining Fincra rollout checks: [Fincra integration map and session handoff](research/fincra-integration-map-2026-11.md).
+
 Configure these Supabase Edge Function secrets before deployment:
 
 - `FINCRA_SECRET_KEY` (or `FINCRA_API_KEY`)

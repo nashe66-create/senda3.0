@@ -91,6 +91,10 @@ export default function NewPlanScreen() {
       setError('Please choose how you want to set up this transfer');
       return;
     }
+    if (pricingMode !== 'fixed_source') {
+      setError('Exact destination amounts are temporarily unavailable. Choose a total GBP amount instead.');
+      return;
+    }
     if (selectedRecipientIds.length === 0) {
       setError('Choose at least one person to receive this transfer');
       return;
@@ -146,7 +150,7 @@ export default function NewPlanScreen() {
           amount_gbp: pricingMode === 'fixed_source' ? amount : 0,
           destination_currency: recipient.currency || selectedCountryInfo?.currency || '',
           receiving_method: recipient.receiving_method,
-          amount_destination: pricingMode === 'fixed_destination' ? amount : 0,
+          amount_destination: 0,
           fx_rate: 0,
         });
       }));
@@ -167,7 +171,7 @@ export default function NewPlanScreen() {
 
   const canProceed = !!destinationCountry && !!pricingMode &&
     selectedRecipientIds.length > 0 &&
-    (pricingMode === 'fixed_destination' || (pricingMode === 'fixed_source' && parseFloat(sourceAmount) > 0));
+    pricingMode === 'fixed_source' && parseFloat(sourceAmount) > 0;
 
   const eligibleRecipients = recipients.filter((recipient) =>
     recipient.country === destinationCountry &&
@@ -403,15 +407,9 @@ export default function NewPlanScreen() {
                     Choose the total amount you want to spend and allocate it between people.
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setPricingMode('fixed_destination')}
-                  style={[
-                    styles.pricingModeCard,
-                    pricingMode === 'fixed_destination' && styles.pricingModeSelected,
-                  ]}
-                >
+                <View style={[styles.pricingModeCard, styles.pricingModeUnavailable]}>
                   <Users
-                    color={pricingMode === 'fixed_destination' ? Colors.primary[600] : Colors.neutral[400]}
+                    color={Colors.neutral[400]}
                     size={22}
                     strokeWidth={2}
                   />
@@ -419,7 +417,10 @@ export default function NewPlanScreen() {
                   <Text style={styles.pricingModeDesc}>
                     I know how much each recipient needs in {selectedCountryInfo?.currency || 'destination currency'}
                   </Text>
-                </TouchableOpacity>
+                  <Text style={styles.pricingModeUnavailableText}>
+                    Temporarily unavailable while exchange rates are confirmed after payment.
+                  </Text>
+                </View>
               </View>
             </>
           )}
@@ -440,7 +441,7 @@ export default function NewPlanScreen() {
                 />
               </View>
               <Text style={styles.budgetHint}>
-                You will allocate this amount between people next.
+                Recipient amounts in local currency are estimates until the exchange is completed.
               </Text>
             </View>
           )}
@@ -705,6 +706,9 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginBottom: Spacing.sm,
   } as ViewStyle,
+  pricingModeUnavailable: {
+    opacity: 0.55,
+  },
   pricingModeSelected: {
     borderColor: Colors.primary[600],
     backgroundColor: Colors.primary[50],
@@ -719,6 +723,11 @@ const styles = StyleSheet.create({
     ...Typography.small,
     color: Colors.neutral[500],
     lineHeight: 18,
+  },
+  pricingModeUnavailableText: {
+    ...Typography.small,
+    color: Colors.neutral[600],
+    marginTop: Spacing.xs,
   },
   budgetSection: {
     marginBottom: Spacing.md,

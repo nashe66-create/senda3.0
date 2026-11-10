@@ -1297,6 +1297,10 @@ export default function PlanDetailScreen() {
                     )}
                   </View>
 
+                  <Text style={styles.quotePreHint}>
+                    Exchange rate and recipient amounts are estimates. Final recipient amounts are confirmed after your payment is received.
+                  </Text>
+
                   <View style={styles.quoteRow}>
                     <Text style={styles.quoteLabel}>You send</Text>
                     <Text style={styles.quoteValue}>{formatGBP(Number(quote.source_amount))}</Text>

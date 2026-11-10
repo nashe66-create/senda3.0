@@ -28,6 +28,23 @@ function calculateSendaFee(sourceAmount: number): number {
   return fromMinorUnits(Math.max(Math.round(sourceMinorUnits / 200), 50));
 }
 
+function allocateAmount(total: number, weights: number[]): number[] {
+  const totalMinorUnits = toMinorUnits(total);
+  const weightTotal = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
+  if (weightTotal <= 0) return weights.map(() => 0);
+
+  let allocatedMinorUnits = 0;
+  return weights.map((weight, index) => {
+    if (index === weights.length - 1) {
+      return fromMinorUnits(totalMinorUnits - allocatedMinorUnits);
+    }
+
+    const share = Math.round(totalMinorUnits * Math.max(0, weight) / weightTotal);
+    allocatedMinorUnits += share;
+    return fromMinorUnits(share);
+  });
+}
+
 function getPayoutMethod(receivingMethod: string | null | undefined): string {
   switch (receivingMethod) {
     case "bank_account":
@@ -149,6 +166,14 @@ Deno.serve(async (req: Request) => {
         error: "Plan pricing mode is invalid",
         error_code: "INVALID_PLAN_PRICING_MODE",
       }, 400);
+    }
+
+    if (pricingMode !== "fixed_source") {
+      return jsonResponse({
+        success: false,
+        error: "Exact destination amounts are temporarily unavailable while Fincra conversion rates are confirmed after payment.",
+        error_code: "FIXED_DESTINATION_TEMPORARILY_UNAVAILABLE",
+      }, 409);
     }
 
     const destinationCountry = String(plan.destination_country ?? "").toUpperCase();
@@ -307,18 +332,29 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Total amount must be greater than zero" }, 400);
     }
 
-    const sendaFee = calculateSendaFee(totalSourceAmount);
+    const businessId = Deno.env.get("FINCRA_BUSINESS_ID")?.trim();
+    if (!businessId) {
+      return jsonResponse({
+        success: false,
+        error: "FINCRA_BUSINESS_ID is not configured",
+        error_code: "FINCRA_BUSINESS_ID_MISSING",
+      }, 500);
+    }
+
+    const quoteAction = pricingMode === "fixed_source" ? "send" : "receive";
+    const quoteAmount = pricingMode === "fixed_source" ? totalSourceAmount : totalDestinationAmount;
     const providerQuote = await fincraRequest<any>(
       "POST",
       "/quotes/generate",
       {
         sourceCurrency: "GBP",
         destinationCurrency,
-        sourceAmount: Number(totalSourceAmount.toFixed(2)),
-        business: Deno.env.get("FINCRA_BUSINESS_ID") ?? undefined,
-        feeBearer: "customer",
-        customerReference: payload.plan_id,
-        reference: payload.plan_id,
+        amount: quoteAmount.toFixed(2),
+        action: quoteAction,
+        transactionType: "conversion",
+        business: businessId,
+        paymentDestination: "fliqpay_wallet",
+        beneficiaryType: "individual",
       },
       {
         idempotencyKey: `senda-quote-${payload.plan_id}-${Date.now()}`,
@@ -327,21 +363,46 @@ Deno.serve(async (req: Request) => {
 
     const quote = providerQuote ?? {};
     const quoteReference = quote.quoteReference ?? quote.reference ?? null;
-    const quoteRate = Number(quote.rate ?? 0);
-    const providerFee = quote.fee == null ? null : Number(quote.fee);
-    const amountToCharge = quote.amountToCharge != null ? Number(quote.amountToCharge) : Number((totalSourceAmount + sendaFee).toFixed(2));
-    const amountToReceive = quote.amountToReceive != null ? Number(quote.amountToReceive) : Number(totalDestinationAmount.toFixed(2));
+    const quotedSourceAmount = Number(quote.sourceAmount ?? quote.amountToCharge ?? totalSourceAmount);
+    const quotedDestinationAmount = Number(quote.destinationAmount ?? quote.amountToReceive ?? totalDestinationAmount);
+    const amountToCharge = Number(quote.amountToCharge ?? quotedSourceAmount);
+    const amountToReceive = Number(quote.amountToReceive ?? quotedDestinationAmount);
+    const rawQuoteRate = Number(quote.rate ?? 0);
+    const quoteRate = rawQuoteRate > 0 ? rawQuoteRate : quotedDestinationAmount / quotedSourceAmount;
+    const providerFee = quote.fee == null ? 0 : Number(quote.fee);
     const expiresAt = quote.expiresAt ?? quote.expireAt ?? null;
 
-    if (!quoteReference) {
+    if (
+      !quoteReference ||
+      !Number.isFinite(quotedSourceAmount) || quotedSourceAmount <= 0 ||
+      !Number.isFinite(quotedDestinationAmount) || quotedDestinationAmount <= 0 ||
+      !Number.isFinite(amountToCharge) || amountToCharge <= 0 ||
+      !Number.isFinite(amountToReceive) || amountToReceive <= 0 ||
+      !Number.isFinite(quoteRate) || quoteRate <= 0 ||
+      !Number.isFinite(providerFee) ||
+      !expiresAt || !Number.isFinite(new Date(expiresAt).getTime())
+    ) {
       return jsonResponse({
         success: false,
-        error: "Fincra quote did not return a valid quote reference",
+        error: "Fincra quote response is missing valid amounts, rate, reference, or expiry",
         error_code: "FINCRA_QUOTE_INVALID",
       }, 502);
     }
 
-    const customerPays = Number((amountToCharge || totalSourceAmount + sendaFee).toFixed(2));
+    totalSourceAmount = Number(quotedSourceAmount.toFixed(2));
+    totalDestinationAmount = Number(quotedDestinationAmount.toFixed(2));
+    const sendaFee = calculateSendaFee(totalSourceAmount);
+    const customerPays = Number((amountToCharge + sendaFee).toFixed(2));
+    const sourceAllocations = allocateAmount(totalSourceAmount, breakdown.map((entry) => entry.source_amount));
+    const destinationAllocations = allocateAmount(totalDestinationAmount, breakdown.map((entry) => entry.destination_amount));
+    const quotedBreakdown = breakdown.map((entry, index) => ({
+      ...entry,
+      source_amount: sourceAllocations[index],
+      destination_amount: destinationAllocations[index],
+      fx_rate: sourceAllocations[index] > 0
+        ? Number((destinationAllocations[index] / sourceAllocations[index]).toFixed(8))
+        : quoteRate,
+    }));
 
     const planUpdate = {
       status: "quoted",
@@ -372,7 +433,7 @@ Deno.serve(async (req: Request) => {
     }
 
     for (const commitment of commitments) {
-      const targetAmount = breakdown.find((entry) => entry.commitment_id === commitment.id);
+      const targetAmount = quotedBreakdown.find((entry) => entry.commitment_id === commitment.id);
       if (!targetAmount) continue;
 
       const { error: updateCommitmentError } = await supabase
@@ -400,31 +461,23 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({
       success: true,
-      message: "Quote generated successfully",
-      data: {
-        plan_id: plan.id,
-        quote: {
-          source_currency: "GBP",
-          destination_currency: destinationCurrency,
-          source_amount: Number(totalSourceAmount.toFixed(2)),
-          destination_amount: Number(totalDestinationAmount.toFixed(2)),
-          amount_to_charge: customerPays,
-          amount_to_receive: Number(amountToReceive.toFixed(2)),
-          rate: quoteRate || 0,
-          fee: providerFee,
-          senda_fee: sendaFee,
-          quote_reference: quoteReference,
-          expires_at: expiresAt,
-        },
-        pricing: {
-          senda_fee: sendaFee,
-          provider_fee: providerFee,
-          total_customer_pays: customerPays,
-          quote_rate: quoteRate || 0,
-          actual_collection_cost: providerFee,
-        },
-        breakdown,
-      },
+      plan_id: plan.id,
+      pricing_mode: pricingMode,
+      source_currency: "GBP",
+      destination_country: destinationCountry,
+      destination_currency: destinationCurrency,
+      source_amount: totalSourceAmount,
+      destination_amount: totalDestinationAmount,
+      customer_pays: customerPays,
+      customer_fx_rate: quoteRate,
+      provider_fx_rate: quoteRate,
+      provider_fee: providerFee,
+      senda_fee: sendaFee,
+      processing_fee: providerFee,
+      senda_fx_margin: 0,
+      quote_created_at: new Date().toISOString(),
+      quote_expires_at: expiresAt,
+      recipients: quotedBreakdown,
     });
   } catch (error) {
     if (error instanceof FincraApiError) {

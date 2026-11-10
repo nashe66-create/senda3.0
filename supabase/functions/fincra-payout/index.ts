@@ -1,6 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.58.0";
-import { FincraApiError, createFincraPayout, getFincraPayoutByReference } from "../_shared/fincra.ts";
+import {
+  FincraApiError,
+  createFincraPayout,
+  getFincraPayoutByCustomerReference,
+  getFincraPayoutByReference,
+  listFincraPayoutProviders,
+} from "../_shared/fincra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,22 +82,61 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, error: "Missing reference query parameter" }, 400);
       }
 
-      const { data: commitment, error: commitmentError } = await supabase
+      let { data: commitment, error: commitmentError } = await supabase
         .from("commitments")
-        .select("id, plan_id")
+        .select("id, plan_id, fincra_payout_reference, fincra_payout_customer_reference")
         .eq("user_id", userId)
         .eq("fincra_payout_reference", reference)
         .maybeSingle();
+
+      let lookupByCustomerReference = false;
+      if (!commitment && !commitmentError) {
+        const customerLookup = await supabase
+          .from("commitments")
+          .select("id, plan_id, fincra_payout_reference, fincra_payout_customer_reference")
+          .eq("user_id", userId)
+          .eq("fincra_payout_customer_reference", reference)
+          .maybeSingle();
+        commitment = customerLookup.data;
+        commitmentError = customerLookup.error;
+        lookupByCustomerReference = Boolean(commitment);
+      }
 
       if (commitmentError || !commitment) {
         return jsonResponse({ success: false, error: "Payout not found" }, 404);
       }
 
-      const payout = await getFincraPayoutByReference<Record<string, unknown>>(reference);
+      let payout: Record<string, unknown>;
+      if (lookupByCustomerReference) {
+        payout = await getFincraPayoutByCustomerReference<Record<string, unknown>>(reference);
+      } else {
+        try {
+          payout = await getFincraPayoutByReference<Record<string, unknown>>(reference);
+        } catch (error) {
+          if (!commitment.fincra_payout_customer_reference) throw error;
+          payout = await getFincraPayoutByCustomerReference<Record<string, unknown>>(
+            commitment.fincra_payout_customer_reference,
+          );
+        }
+      }
+      const providerReference = String(payout.reference ?? commitment.fincra_payout_reference ?? "");
+      if (!providerReference) {
+        return jsonResponse({ success: false, error: "Fincra payout response has no provider reference" }, 502);
+      }
+      if (providerReference !== commitment.fincra_payout_reference) {
+        const { error: referenceUpdateError } = await supabase
+          .from("commitments")
+          .update({ fincra_payout_reference: providerReference })
+          .eq("id", commitment.id)
+          .eq("user_id", userId);
+        if (referenceUpdateError) {
+          throw new Error(`Failed to persist Fincra payout reference: ${referenceUpdateError.message}`);
+        }
+      }
       const status = statusForReconciliation(payout);
       let reconciliation: unknown = null;
       if (status) {
-        const amountValue = payout.amount ?? payout.paidAmount ?? payout.paid_amount;
+        const amountValue = payout.amountReceived ?? payout.amount_received ?? payout.amount ?? payout.paidAmount ?? payout.paid_amount;
         const amount = amountValue == null ? null : Number(amountValue);
         if (amount !== null && !Number.isFinite(amount)) {
           return jsonResponse({ success: false, error: "Fincra payout amount is invalid" }, 502);
@@ -105,18 +150,20 @@ Deno.serve(async (req: Request) => {
           "SHA-256",
           new TextEncoder().encode(JSON.stringify(payout)),
         );
-        const eventId = `payout-poll:${reference}:${Array.from(new Uint8Array(digest))
+        const eventId = `payout-poll:${providerReference}:${Array.from(new Uint8Array(digest))
           .map((byte) => byte.toString(16).padStart(2, "0"))
           .join("")}`;
         const serviceClient = createClient(supabaseUrl, serviceRoleKey);
         const { data: result, error: reconciliationError } = await serviceClient.rpc("apply_fincra_webhook_event", {
           p_event_id: eventId,
           p_event_type: "payout.status.poll",
-          p_reference: reference,
+          p_reference: providerReference,
           p_stage: "payout",
           p_provider_status: status,
           p_amount: amount,
-          p_currency: payout.currency == null ? null : String(payout.currency),
+          p_currency: payout.destinationCurrency == null && payout.currency == null
+            ? null
+            : String(payout.destinationCurrency ?? payout.currency),
           p_payload: payout,
         });
         if (reconciliationError) {
@@ -197,12 +244,69 @@ Deno.serve(async (req: Request) => {
       }, 409);
     }
 
-    const reference = String(commitment.fincra_payout_reference ?? `senda-payout-${commitment.id}`);
+    const payoutMethod = String(commitment.receiving_method ?? "");
+    const paymentDestination = payoutMethod === "bank_account"
+      ? "bank_account"
+      : payoutMethod === "mobile_money"
+      ? "mobile_money_wallet"
+      : null;
+    if (!paymentDestination) {
+      return jsonResponse({
+        success: false,
+        error: "Fincra payouts currently support bank accounts and mobile-money wallets only.",
+        error_code: "UNSUPPORTED_FINCRA_PAYOUT_METHOD",
+      }, 409);
+    }
+
+    const snapshot = recipientSnapshot as Record<string, unknown>;
+    const recipientName = String(snapshot.recipient_name ?? snapshot.name ?? "").trim();
+    const nameParts = recipientName.split(/\s+/).filter(Boolean);
+    const firstName = String(snapshot.first_name ?? nameParts[0] ?? "").trim();
+    const lastName = String(snapshot.last_name ?? nameParts.slice(1).join(" ") ?? "").trim();
+    const country = String(snapshot.destination_country ?? snapshot.country ?? "").toUpperCase();
+    const accountNumber = String(snapshot.account_number ?? "").trim() ||
+      (payoutMethod === "mobile_money" ? String(snapshot.phone ?? "").trim() : "");
+    const bankCode = String(snapshot.fincra_bank_code ?? snapshot.bank_code ?? "").trim();
+    const mobileMoneyCode = String(
+      snapshot.fincra_mobile_money_code ?? snapshot.mobile_money_provider ?? snapshot.mobile_money_network ?? "",
+    ).trim();
+    const paymentScheme = String(snapshot.fincra_payment_scheme ?? snapshot.payment_scheme ?? "").trim();
+
+    if (!firstName || !lastName || !country || !accountNumber ||
+      (payoutMethod === "bank_account" && !bankCode) ||
+      (payoutMethod === "mobile_money" && !mobileMoneyCode)) {
+      return jsonResponse({
+        success: false,
+        error: "Recipient snapshot is missing Fincra-required name, country, account, or provider-code details.",
+        error_code: "INCOMPLETE_FINCRA_BENEFICIARY",
+      }, 409);
+    }
+
+    const payoutProviders = await listFincraPayoutProviders<Array<Record<string, unknown>>>({
+      country,
+      currency,
+      paymentDestination,
+    });
+    const providerCode = paymentDestination === "bank_account" ? bankCode : mobileMoneyCode;
+    if (!payoutProviders.some((provider) => String(provider.code ?? "") === providerCode)) {
+      return jsonResponse({
+        success: false,
+        error: "The saved recipient provider code is not enabled for this Fincra corridor. Re-verify the recipient with Fincra's provider list before payout.",
+        error_code: "FINCRA_PROVIDER_CODE_UNAVAILABLE",
+      }, 409);
+    }
+
+    const businessId = Deno.env.get("FINCRA_BUSINESS_ID")?.trim();
+    if (!businessId) {
+      return jsonResponse({ success: false, error: "FINCRA_BUSINESS_ID is not configured" }, 500);
+    }
+
+    const customerReference = `senda-payout-${commitment.id}-${crypto.randomUUID()}`;
     const { data: claimedCommitment, error: claimError } = await supabase
       .from("commitments")
       .update({
         status: "processing",
-        fincra_payout_reference: reference,
+        fincra_payout_customer_reference: customerReference,
         fincra_payout_status: "processing",
       })
       .eq("id", commitment.id)
@@ -218,21 +322,42 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, error: "Commitment payout is already in progress" }, 409);
     }
     attemptedPayout = { commitmentId: commitment.id, userId: ownerId };
-    attemptedReference = reference;
+    attemptedReference = customerReference;
 
     const payout = await createFincraPayout({
       amount,
-      currency,
-      walletId: Deno.env.get("FINCRA_WALLET_ID") ?? undefined,
-      reference,
-      business: Deno.env.get("FINCRA_BUSINESS_ID") ?? undefined,
-      beneficiary: recipientSnapshot,
-      metadata: {
-        plan_id: commitment.plan_id,
-        commitment_id: commitment.id,
-        user_id: ownerId,
+      sourceCurrency: currency,
+      destinationCurrency: currency,
+      paymentDestination,
+      customerReference,
+      description: `Senda recipient payout ${commitment.id}`,
+      paymentScheme: paymentScheme || undefined,
+      business: businessId,
+      beneficiary: {
+        firstName,
+        lastName: lastName || undefined,
+        accountHolderName: String(snapshot.account_holder_name ?? recipientName).trim(),
+        type: "individual",
+        country,
+        accountNumber,
+        ...(paymentDestination === "bank_account" ? { bankCode } : { mobileMoneyCode }),
       },
     });
+
+    const providerReference = String(payout.reference ?? "");
+    if (!providerReference) {
+      throw new Error("Fincra payout response did not contain a provider reference");
+    }
+
+    const { error: payoutReferenceError } = await supabase
+      .from("commitments")
+      .update({ fincra_payout_reference: providerReference })
+      .eq("id", commitment.id)
+      .eq("user_id", ownerId)
+      .eq("fincra_payout_customer_reference", customerReference);
+    if (payoutReferenceError) {
+      throw new Error(`Payout was submitted but its Fincra reference could not be saved: ${payoutReferenceError.message}`);
+    }
 
     const { error: transactionUpdateError } = await supabase
       .from("transactions")
@@ -248,7 +373,13 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({
       success: true,
-      data: { plan_id: commitment.plan_id, commitment_id: commitment.id, reference, payout },
+      data: {
+        plan_id: commitment.plan_id,
+        commitment_id: commitment.id,
+        customer_reference: customerReference,
+        reference: providerReference,
+        payout,
+      },
     });
   } catch (error) {
     if (attemptedPayout && attemptedReference) {
@@ -264,7 +395,7 @@ Deno.serve(async (req: Request) => {
           })
           .eq("id", attemptedPayout.commitmentId)
           .eq("user_id", attemptedPayout.userId)
-          .eq("fincra_payout_reference", attemptedReference)
+          .eq("fincra_payout_customer_reference", attemptedReference)
           .eq("status", "processing");
         if (reconciliationError) {
           console.error("Failed to mark Fincra payout for reconciliation:", reconciliationError);
