@@ -1,5 +1,11 @@
 # Senda
 
+## Documentation
+
+Start with the [Senda product and engineering handbook](docs/README.md). It explains the provider-neutral product model, domain entities, money-movement lifecycle, technical architecture and the current Fincra migration. GitHub Copilot is instructed to consult the relevant documents before changing code.
+
+Current provider direction: Fincra is the provider being tested for the migration. Flutterwave references remain in the repository as legacy/transitional code until the documented migration and historical-data requirements are complete. Do not interpret the existence of a Fincra implementation as proof of production readiness.
+
 [![Open in Bolt](https://bolt.new/static/open-in-bolt.svg)](https://bolt.new/~/sb1-rutfrxo7)
 
 ## Run without Copilot
