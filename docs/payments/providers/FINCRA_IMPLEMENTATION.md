@@ -122,7 +122,10 @@ GET fincra-checkout?reference=...:
 - queries Fincra by merchant reference;
 - maps the provider status;
 - applies a stable poll event through apply_fincra_webhook_event;
-- returns verified status/reason to the client.
+- returns verified status/reason to the client;
+- invokes fincra-conversion when a successful collection has been reconciled.
+
+The signed webhook path can also invoke conversion after successful collection. These two paths may overlap, so conversion claiming and stable references must prevent duplicate conversion.
 
 The collection SQL transition checks GBP currency and amount against both transaction.amount_gbp and plan.customer_pays, checks quote lock and plan/payment state, then marks transaction successful, plan funded and commitments ready. A mismatch is not a success.
 
