@@ -2,6 +2,38 @@
 
 You are working on Senda, a cross-border grouped-remittance product. Treat this repository as a live financial application, not a generic CRUD app. Correctness of money movement, ownership, provider verification, auditability and recovery is more important than making a change look complete.
 
+
+
+## Mandatory session-start protocol — every new Copilot session
+
+**This is required at the beginning of every new Copilot Chat, agent or coding session in this repository. It is not optional and must not be postponed until a task changes code.**
+
+Before answering the first task, proposing an implementation, planning work or editing any file:
+
+1. Confirm that this repository's `.github/copilot-instructions.md` is present in the active instruction context. Supported Copilot clients load repository-wide instructions from this file when repository custom instructions are enabled and the repository is in context. If it is not available, do not assume these rules were loaded: tell the user and ask them to reopen/attach the repository or enable repository instructions.
+2. Read the complete `docs/README.md`.
+3. Read every core handbook document below in full, even when the first task appears unrelated. Do not substitute the README summaries, search snippets or memory from an earlier session:
+   - `docs/product/SENDA_PRODUCT_OVERVIEW.md`
+   - `docs/architecture/CORE_DOMAIN_MODEL.md`
+   - `docs/architecture/MONEY_MOVEMENT_LIFECYCLE.md`
+   - `docs/architecture/TECHNICAL_ARCHITECTURE.md`
+   - `docs/payments/PROVIDER_INTEGRATION_MODEL.md`
+   - `docs/payments/providers/FINCRA_IMPLEMENTATION.md`
+   - `docs/payments/providers/FLUTTERWAVE_MIGRATION_STATUS.md`
+   - `docs/operations/FINCRA_MIGRATION_READINESS.md`
+   - `docs/engineering/CHANGE_AND_TESTING_GUIDE.md`
+   - `docs/decisions/ADR-001-FINCRA-AS-CURRENT-PROVIDER.md`
+4. Check that each file was actually opened/read in the current session. If a file is missing, unreadable or not present on the current branch, report that gap; do not pretend it was read and do not fill it from assumptions.
+5. Then inspect the current branch, HEAD commit and working tree. The code on the active branch may have moved on since the handbook snapshot. Treat current code and applied schema as implementation evidence; identify and report material differences instead of silently relying on stale documentation.
+6. Read any relevant `.github/instructions/*.instructions.md` file before working on matching paths. Re-read the specific handbook sections/files relevant to a task when they have changed or when the task needs detailed implementation context.
+
+At the start of the first response in each new session, give a short **Senda session check** stating:
+- the active branch and current HEAD commit;
+- that the repository instructions and all listed handbook documents were read in this session (or name any that could not be read);
+- the most important constraints relevant to the task.
+
+Do not begin implementation until this protocol is complete. Do not claim the protocol is complete unless you have actually read the files during this session. These instructions apply again after starting a new chat/session, even if a previous session completed the checklist.
+
 ## Required reading before changing code
 
 1. Read docs/README.md.
