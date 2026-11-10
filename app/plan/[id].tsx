@@ -164,6 +164,7 @@ export default function PlanDetailScreen() {
   const [commitmentAmount, setCommitmentAmount] = useState('');
   const [commitmentError, setCommitmentError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [previousCreatedRecipientId, setPreviousCreatedRecipientId] = useState<string | undefined>();
 
   // Quote state
   const [showQuoteModal, setShowQuoteModal] = useState(false);
@@ -230,13 +231,18 @@ export default function PlanDetailScreen() {
     }, [loadPlan])
   );
 
-  // Pre-select a recipient that was just created from this plan
-  useEffect(() => {
+  if (created_recipient_id !== previousCreatedRecipientId) {
+    setPreviousCreatedRecipientId(created_recipient_id);
     if (created_recipient_id) {
       setSelectedRecipientId(created_recipient_id);
       setCommitmentAmount('');
       setCommitmentError(null);
       setShowAddCommitment(true);
+    }
+  }
+
+  useEffect(() => {
+    if (created_recipient_id) {
       router.setParams({ created_recipient_id: undefined });
     }
   }, [created_recipient_id]);
@@ -258,12 +264,6 @@ export default function PlanDetailScreen() {
       orchestrationStartedRef.current = false;
     }
   }, [id, loadPlan]);
-
-  useEffect(() => {
-    if (plan?.status === 'funded') {
-      handleAutomaticPayoutStart();
-    }
-  }, [plan?.status, handleAutomaticPayoutStart]);
 
   useFocusEffect(
     useCallback(() => {
@@ -721,7 +721,7 @@ export default function PlanDetailScreen() {
   const quoteExpired = Boolean(
     plan.status === 'quoted' &&
     plan.quote_expires_at &&
-    new Date(plan.quote_expires_at).getTime() <= Date.now()
+    quoteCountdown === 0
   );
 
   // Filter recipients to same corridor

@@ -151,7 +151,7 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>{greeting}</Text>
-          <Text style={styles.subtitle}>Here's your transfer overview</Text>
+          <Text style={styles.subtitle}>Here&apos;s your transfer overview</Text>
         </View>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>

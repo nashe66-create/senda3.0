@@ -327,7 +327,7 @@ export default function KycScreen() {
         <CheckCircle2 color={Colors.success[600]} size={56} strokeWidth={2} />
         <Text style={styles.successTitle}>Account setup complete!</Text>
         <Text style={styles.successDesc}>
-          We've set up your Senda account and you can now start making transfers.
+          We&apos;ve set up your Senda account and you can now start making transfers.
         </Text>
       </View>
     );
@@ -588,7 +588,7 @@ export default function KycScreen() {
 
             <View style={styles.infoBox}>
               <Text style={styles.infoText}>
-                By continuing, you confirm that the information you've provided is accurate and complete.
+                By continuing, you confirm that the information you&apos;ve provided is accurate and complete.
               </Text>
             </View>
 
