@@ -33,6 +33,8 @@ Do not describe the migration as complete until the completion criteria in the F
 
 ### P0 — beneficiary and corridor readiness
 
+The current quote helper maps bank_account to bank, mobile_money to mobile_money and cash_pickup to cash_pickup, but falls back to mobile_money for other receiving methods. The domain includes bill_payment. Do not let bill_payment silently become a mobile-money payout: implement an explicit supported Fincra mapping or reject it until the capability is verified.
+
 The current recipient save path in app/recipient/[id].tsx calls Flutterwave recipient create/update functions. The transfer creation screen also filters eligible recipients using a Flutterwave recipient ID.
 
 This must be replaced before removing Flutterwave recipient services. Decide whether:
@@ -65,7 +67,7 @@ Do not leave the existing 15-second schedule pointing to a function whose provid
 
 ### P0 — quote and amount correctness
 
-The current quote function derives per-commitment destination amounts from commitment allocations and existing commitment FX values, then requests an order-level Fincra quote. Confirm that the returned provider quote and the recipient-level breakdown reconcile exactly.
+The current quote function derives per-commitment destination amounts from commitment allocations and existing commitment FX values, then requests an order-level Fincra quote. Confirm that the returned provider quote and the recipient-level breakdown reconcile exactly. The conversion reconciliation SQL compares Fincra's successful conversion amount/currency against plans.destination_amount, while the quote function separately stores quote_amount_to_receive and destination_amount. Prove these values intentionally agree for both pricing modes before live use.
 
 Verify:
 - source amount vs customer charge vs Senda fee vs provider fee;
