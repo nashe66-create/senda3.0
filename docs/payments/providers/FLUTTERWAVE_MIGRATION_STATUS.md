@@ -37,7 +37,7 @@ The product must continue to satisfy the relevant KYC/AML and corridor validatio
 
 ### Scheduled payout reconciliation
 
-supabase/functions/senda-payout-reconciliation/index.ts still contains Flutterwave authentication and transfer-status lookup logic, including FLW_CLIENT_ID, FLW_CLIENT_SECRET and Flutterwave endpoints.
+supabase/functions/senda-payout-reconciliation/index.ts still contains Flutterwave authentication and transfer-status lookup logic, including FLW_CLIENT_ID, FLW_CLIENT_SECRET and Flutterwave endpoints. The repository migration 20260908150000_schedule_payout_reconciliation.sql schedules this function every 15 seconds with pg_cron/pg_net and a Vault-held cron secret. Whether that job is active in a given Supabase environment must be verified separately.
 
 Do not assume this scheduled function reconciles Fincra payouts. Before replacing it:
 - identify every pg_cron/pg_net/Vault/scheduler trigger that calls it;
